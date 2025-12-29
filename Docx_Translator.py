@@ -45,7 +45,7 @@ def select_docx_file():
             ("All FIles", "*.*") # show every type of file
         ],
         # use the environment variable to set the initial directory and a spare default value
-        initialdir=os.getenv("docx_translator_dir", os.getenv("app_tools_dir")) 
+        initialdir=os.getenv("lin_test_docs_dir", os.getenv("app_tools_dir")) 
     )
     
     # destroy the root dialog window
@@ -169,7 +169,6 @@ def transalted_doc_creation(file_path, translated_file):
         print(f"Error reading the file: {e}")
         return
         
-
     # Create new file name
     new_name = name_no_ext + "_ES" + ext
 
@@ -195,9 +194,9 @@ def transalted_doc_creation(file_path, translated_file):
                 trans_file.add_paragraph(paragraph)
 
                 # Handle empty lines
-                if not paragraph.strip():
-                    trans_file.add_paragraph("")
-                    continue
+#                if not paragraph.strip():
+#                    trans_file.add_paragraph("")
+#                    continue
 
             trans_file.save(output_path)
             print(f"Translated document saved successfully at: {output_path}")
