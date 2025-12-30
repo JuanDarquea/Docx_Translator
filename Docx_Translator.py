@@ -166,7 +166,7 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
                                     error_log_file)
                 with open(error_log, "a+", encoding="utf-8") as log:
                     try:
-                        line = f"\n[{timestamp}] - Paragraph {idx} = {paragraph.text}- ERROR = {e}"
+                        line = f"\n[{timestamp}] - Paragraph #{idx} = {paragraph.text}- ERROR = {e}"
                         log.write(line)
                         print(f"\nError log saved successfully at: {error_log}")
                         return partial_file
