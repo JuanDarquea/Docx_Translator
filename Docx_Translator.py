@@ -128,28 +128,35 @@ async def translate_text_googletrans(file_path, target_lang="ES"):
     translated_file = []
     async with Translator() as translator:
         print()
-        for paragraph in file_text.paragraphs:
-            if paragraph.text.strip() == "": # skip empty paragraphs
-                translated_file.append("") # keep empty paragraphs
-                print("<Empty paragraph> --> <Empty paragraph>")
-            else:
-                try:
-                    result = await translator.translate(
-                        paragraph.text, 
-                        dest=target_lang
-                        )
-                    print(paragraph.text, " --> ", result.text, sep="")
-                    translated_file.append(result.text)
-                    time.sleep(delay_between_requests)  # to avoid hitting rate limits
-                except Exception as e:
-                    print(f"Error! Could not translate the paragraph: {e}", f"\nOriginal paragraph: {paragraph.text}")
-                    return
-                
+  
+        try:
+            for idx, paragraph in enumerate(file_text.paragraphs, start=1):
+
+                # Simulate an error for testing purposes
+#                if idx == 7:
+#                    raise Exception(f"\nSimulated error for testing purposes.")
+
+                if paragraph.text.strip() == "": # skip empty paragraphs
+                    translated_file.append("") # keep empty paragraphs
+                    print("<Empty paragraph> --> <Empty paragraph>")
+                else:
+                        result = await translator.translate(
+                            paragraph.text, 
+                            dest=target_lang
+                            )
+                        print(paragraph.text, " --> ", result.text, sep="")
+                        translated_file.append(result.text)
+                        time.sleep(delay_between_requests)  # to avoid hitting rate limits
+        except Exception as e:
+                print(f"\nError! Could not translate the paragraph: {e}", f"\nOriginal paragraph: {paragraph.text}")
+                partial_file = translated_file.copy()
+                return partial_file
+
     print()
     print("\nThe file output is the following list:", 
           f"\n{translated_file}")
     print()
-    return translated_file if translated_file else None
+    return translated_file if translated_file else partial_file
 
 def transalted_doc_creation(file_path, translated_file):
     """Function to create an output file and 
@@ -171,39 +178,67 @@ def transalted_doc_creation(file_path, translated_file):
         
     # Create new file name
     new_name = name_no_ext + "_ES" + ext
+    partial_name = name_no_ext + "_PARTIAL_ES" + ext
 
     # Assign output file path
-    try:
-        output_dir = os.getenv("lin_translated_docs_dir") or os.getenv("lin_GitHub_dir") or os.path.dirname(file_path)
-        if not output_dir:
-            print("Error!! No output directory defined in environment variables.")
-            return
-        output_path = os.path.join(output_dir, 
-                                   new_name)
-        print(f"Chosen file dir --> {output_dir}")
-        print(f"New file name --> {new_name}")
-        print(f"New file path --> {output_path}\n")
-    except Exception as e:
-        print(f"Error getting the output directory path: {e}")
-        return
-    
-    # Write translated text into the new document
-    with open(output_path, "w+", encoding="utf-8") as out_file:
+    if len(translated_file) == len(read_document(file_path).paragraphs):
         try:
-            for paragraph in translated_file:
-                trans_file.add_paragraph(paragraph)
-
-                # Handle empty lines
-#                if not paragraph.strip():
-#                    trans_file.add_paragraph("")
-#                    continue
-
-            trans_file.save(output_path)
-            print(f"Translated document saved successfully at: {output_path}")
-            return output_path
+            output_dir = os.getenv("lin_translated_docs_dir") or os.getenv("translated_docs_dir") or os.path.dirname(file_path)
+            if not output_dir:
+                print("Error!! No output directory defined in environment variables.")
+                return
+            output_path = os.path.join(output_dir, 
+                                    new_name)
+            print(f"Chosen file dir --> {output_dir}")
+            print(f"New file name --> {new_name}")
+            print(f"New file path --> {output_path}\n")
         except Exception as e:
-            print(f"Error reading translated document: {e}")
+            print(f"Error getting the output directory path: {e}")
             return
+        
+        # Write translated text into the new document
+        with open(output_path, "w+", encoding="utf-8") as out_file:
+            try:
+                for paragraph in translated_file:
+                    trans_file.add_paragraph(paragraph)
+
+                    # Handle empty lines
+    #                if not paragraph.strip():
+    #                    trans_file.add_paragraph("")
+    #                    continue
+
+                trans_file.save(output_path)
+                print(f"Translated document saved successfully at: {output_path}")
+                return output_path
+            except Exception as e:
+                print(f"Error reading translated document: {e}")
+                return
+    else:
+        try:
+            output_dir = os.getenv("lin_translated_docs_dir") or os.getenv("translated_docs_dir") or os.path.dirname(file_path)
+            if not output_dir:
+                print("Error!! No output directory defined in environment variables.")
+                return
+            output_path = os.path.join(output_dir, 
+                                    partial_name)
+            print(f"Chosen file dir --> {output_dir}")
+            print(f"New file name --> {partial_name}")
+            print(f"New file path --> {output_path}\n")
+        except Exception as e:
+            print(f"Error getting the output directory path: {e}")
+            return
+        
+        # Write translated text into the new document
+        with open(output_path, "w+", encoding="utf-8") as out_file:
+            try:
+                for paragraph in translated_file:
+                    trans_file.add_paragraph(paragraph)
+                    trans_file.save(output_path)
+                print(f"Translated document saved successfully at: {output_path}")
+                return output_path
+            except Exception as e:
+                print(f"Error reading translated document: {e}")
+                return
 
 def main():
     """Main function to test file selection"""
@@ -237,7 +272,6 @@ def main():
 
     # Call function to create a new document with the translated text
     transalted_doc_creation(chosen_file, translated_file)
-
 
 if __name__=="__main__":
     main()
