@@ -119,9 +119,9 @@ def read_document(file_path):
 #            index - 1 # do not count empty paragraphs
     return selected_document if selected_document else None
 
-async def translate_text_googletrans(file_path, target_lang="ES"):
+async def translate_text_googletrans(file_path, selected_document, target_lang="ES"):
     """Translate text using googletrans module"""
-    file_text = read_document(file_path)
+    file_text = selected_document
     if file_text is None:
         print("The file selected does not exist or could not be read.")
         return
@@ -134,8 +134,8 @@ async def translate_text_googletrans(file_path, target_lang="ES"):
             for idx, paragraph in enumerate(file_text.paragraphs, start=1):
 
                 # Simulate an error for testing purposes
-                if idx == 7:
-                    raise Exception(f"\nSimulated error for testing purposes.")
+#                if idx == 7:
+#                    raise Exception(f"Simulated error for testing purposes.")
 
                 if paragraph.text.strip() == "": # skip empty paragraphs
                     translated_file.append("") # keep empty paragraphs
@@ -149,20 +149,43 @@ async def translate_text_googletrans(file_path, target_lang="ES"):
                         translated_file.append(result.text)
                         time.sleep(delay_between_requests)  # to avoid hitting rate limits
         except Exception as e:
-                print(f"\nError! Could not translate the paragraph: {e}", f"\nOriginal paragraph: {paragraph.text}")
+                print(f"\nError! Could not translate the paragraph {idx}, error type: {e}", 
+                      f"\nOriginal paragraph: {paragraph.text}")
                 partial_file = translated_file.copy()
+
+                # Create error log file
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                output_dir = os.getenv("lin_error_logs_dir") or os.getenv("translated_docs_dir") or os.path.dirname(file_path)
+                if not output_dir:
+                    print("\nError!! No output directory defined in environment variables.")
+                    return
+                base_name = os.path.basename(file_path)
+                name_no_ext, ext = os.path.splitext(base_name)
+                error_log_file = f"{name_no_ext}_PARTIAL_ERROR_LOG.txt"
+                error_log = os.path.join(output_dir,
+                                    error_log_file)
+                with open(error_log, "a+", encoding="utf-8") as log:
+                    try:
+                        line = f"\n[{timestamp}] - Paragraph {idx} = {paragraph.text}- ERROR = {e}"
+                        log.write(line)
+                        print(f"\nError log saved successfully at: {error_log}")
+                        return partial_file
+                    except Exception as e:
+                        print(f"\nError writing error log file: {e}")
+                        return
+
                 return partial_file
 
     print()
     print("\nThe file output is the following list:", 
-          f"\n{translated_file}")
+          f"\n{translated_file if translated_file else partial_file}")
     print()
     return translated_file if translated_file else partial_file
 
-def transalted_doc_creation(file_path, translated_file):
+def transalted_doc_creation(file_path, translated_file, selected_document):
     """Function to create an output file and 
     write translated text into the new file"""
-    print("Creating output file...")
+    print("\nCreating output file...")
     
     # Create output file
     trans_file = Document()
@@ -183,7 +206,7 @@ def transalted_doc_creation(file_path, translated_file):
     partial_name = f"{name_no_ext}_PARTIAL_ES_{timestamp}{ext}"
 
     # Assign output file path
-    if len(translated_file) == len(file_path):
+    if len(translated_file) == len(selected_document.paragraphs):
         try:
             output_dir = os.getenv("lin_translated_docs_dir") or os.getenv("translated_docs_dir") or os.path.dirname(file_path)
             if not output_dir:
@@ -255,7 +278,7 @@ def main():
         return
     
     # Read document
-    #selected_document = read_document(chosen_file)
+    selected_document = read_document(chosen_file)
 
     # Translate sample text
     #translated_text = translator.translate("Hello world", 
@@ -264,11 +287,11 @@ def main():
 
     # Translate document and save to translated files directory
     translated_file = asyncio.run(
-        translate_text_googletrans(chosen_file, target_lang="ES")
+        translate_text_googletrans(chosen_file, selected_document, target_lang="ES")
     )
 
     # Call function to create a new document with the translated text
-    transalted_doc_creation(chosen_file, translated_file)
+    transalted_doc_creation(chosen_file, translated_file, selected_document)
 
 if __name__=="__main__":
     main()
