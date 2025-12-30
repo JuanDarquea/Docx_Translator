@@ -158,7 +158,7 @@ async def translate_text_googletrans(file_path, target_lang="ES"):
     print()
     return translated_file if translated_file else partial_file
 
-def transalted_doc_creation(file_path, translated_file):
+def transalted_doc_creation(file_path, translated_file, selected_document):
     """Function to create an output file and 
     write translated text into the new file"""
     print("Creating output file...")
@@ -181,7 +181,7 @@ def transalted_doc_creation(file_path, translated_file):
     partial_name = name_no_ext + "_PARTIAL_ES" + ext
 
     # Assign output file path
-    if len(translated_file) == len(read_document(file_path).paragraphs):
+    if len(translated_file) == len(selected_document.paragraphs):
         try:
             output_dir = os.getenv("lin_translated_docs_dir") or os.getenv("translated_docs_dir") or os.path.dirname(file_path)
             if not output_dir:
@@ -201,11 +201,6 @@ def transalted_doc_creation(file_path, translated_file):
             try:
                 for paragraph in translated_file:
                     trans_file.add_paragraph(paragraph)
-
-                    # Handle empty lines
-    #                if not paragraph.strip():
-    #                    trans_file.add_paragraph("")
-    #                    continue
 
                 trans_file.save(output_path)
                 print(f"Translated document saved successfully at: {output_path}")
@@ -271,7 +266,7 @@ def main():
     )
 
     # Call function to create a new document with the translated text
-    transalted_doc_creation(chosen_file, translated_file)
+    transalted_doc_creation(chosen_file, translated_file, read_document(chosen_file))
 
 if __name__=="__main__":
     main()
