@@ -11,6 +11,7 @@ from dotenv import load_dotenv # to load environment variables from .env file
 from zipfile import BadZipFile # to handle invalid .docx files
 import deepl # to translate text
 from docx import Document   # to read and write .docx files
+from datetime import datetime
 import time
 
 # Load the .env file from the same directory as this script
@@ -133,8 +134,8 @@ async def translate_text_googletrans(file_path, target_lang="ES"):
             for idx, paragraph in enumerate(file_text.paragraphs, start=1):
 
                 # Simulate an error for testing purposes
-#                if idx == 7:
-#                    raise Exception(f"\nSimulated error for testing purposes.")
+                if idx == 7:
+                    raise Exception(f"\nSimulated error for testing purposes.")
 
                 if paragraph.text.strip() == "": # skip empty paragraphs
                     translated_file.append("") # keep empty paragraphs
@@ -158,7 +159,7 @@ async def translate_text_googletrans(file_path, target_lang="ES"):
     print()
     return translated_file if translated_file else partial_file
 
-def transalted_doc_creation(file_path, translated_file, selected_document):
+def transalted_doc_creation(file_path, translated_file):
     """Function to create an output file and 
     write translated text into the new file"""
     print("Creating output file...")
@@ -178,10 +179,11 @@ def transalted_doc_creation(file_path, translated_file, selected_document):
         
     # Create new file name
     new_name = name_no_ext + "_ES" + ext
-    partial_name = name_no_ext + "_PARTIAL_ES" + ext
+    timestamp = datetime.now().strftime("%y%m%d_%H%M")
+    partial_name = f"{name_no_ext}_PARTIAL_ES_{timestamp}{ext}"
 
     # Assign output file path
-    if len(translated_file) == len(selected_document.paragraphs):
+    if len(translated_file) == len(file_path):
         try:
             output_dir = os.getenv("lin_translated_docs_dir") or os.getenv("translated_docs_dir") or os.path.dirname(file_path)
             if not output_dir:
@@ -266,7 +268,7 @@ def main():
     )
 
     # Call function to create a new document with the translated text
-    transalted_doc_creation(chosen_file, translated_file, read_document(chosen_file))
+    transalted_doc_creation(chosen_file, translated_file)
 
 if __name__=="__main__":
     main()
