@@ -153,7 +153,7 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
                       f"\nOriginal paragraph: {paragraph.text}")
                 partial_file = translated_file.copy()
 
-                # Create error log file
+                # Create error log .txt file
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 output_dir = os.getenv("lin_error_logs_dir") or os.getenv("translated_docs_dir") or os.path.dirname(file_path)
                 if not output_dir:
