@@ -98,7 +98,7 @@ def read_document(file_path):
         print("\nDocument content read successfully.")
     except Exception as e: # handle errors while reading document
         print(f"Error reading the document: {e}")
-        return
+        return 
 
     # print paragraph count
     total = len(selected_document.paragraphs)
@@ -119,19 +119,49 @@ def read_document(file_path):
 #            index - 1 # do not count empty paragraphs
     return selected_document if selected_document else None
 
+def paragraphs_style_info(selected_document):
+    """Function to get style information of paragraphs in the document"""
+    print("\nGetting paragraph styles information...")
+    data = []
+
+    for p in selected_document.paragraphs:
+        info = {
+                "alignment":p.alignment, 
+                "style":p.style.name if p.style else "Normal",
+                "runs":[]
+                }
+        
+        for r in p.runs:
+            info["runs"].append({
+                "bold":r.bold,
+                "italic":r.italic,
+                "underline":r.underline,
+                "font_name":r.font.name,
+                "font_size":r.font.size.pt if r.font.size else None,
+                "font_color":r.font.color.rgb if r.font.color else None
+                })
+
+        data.append(info)
+
+    print("Paragraph styles information obtained successfully.")
+    return data
+
 async def translate_text_googletrans(file_path, selected_document, target_lang="ES"):
     """Translate text using googletrans module"""
     file_text = selected_document
     if file_text is None:
         print("The file selected does not exist or could not be read.")
         return
-
+    
+    print(f"\nTranslating document to {target_lang} using googletrans...")
     translated_file = []
+    partial_file = []
     async with Translator() as translator:
         print()
   
         try:
             for idx, paragraph in enumerate(file_text.paragraphs, start=1):
+                style_name = paragraph.style.name if paragraph.style else None
 
                 # Simulate an error for testing purposes
 #                if idx == 7:
@@ -147,7 +177,7 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
                             )
                         print(paragraph.text, " --> ", result.text, sep="")
                         translated_file.append(result.text)
-                        time.sleep(delay_between_requests)  # to avoid hitting rate limits
+                        await asyncio.sleep(delay_between_requests)  # to avoid hitting rate limits
         except Exception as e:
                 print(f"\nError! Could not translate the paragraph {idx}, error type: {e}", 
                       f"\nOriginal paragraph: {paragraph.text}")
@@ -182,7 +212,7 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
     print()
     return translated_file if translated_file else partial_file
 
-def transalted_doc_creation(file_path, translated_file, selected_document):
+def translated_doc_creation(file_path, translated_file, paragraph_info, selected_document):
     """Function to create an output file and 
     write translated text into the new file"""
     print("\nCreating output file...")
@@ -222,15 +252,33 @@ def transalted_doc_creation(file_path, translated_file, selected_document):
             return
         
         # Write translated text into the new document
-        with open(output_path, "w+", encoding="utf-8") as out_file:
-            try:
-                for paragraph in translated_file:
-                    trans_file.add_paragraph(paragraph)
+        try:
+#           for paragraph in translated_file:
+#                    trans_file.add_paragraph(paragraph)
+            for text, style in zip(translated_file, paragraph_info):
+                p = trans_file.add_paragraph()
+
+                # paragraph level style
+                p.style = style["style"]
+                p.alignment = style["alignment"]
+
+                # add translated text
+                run = p.add_run(text)
+
+                # apply run level styles (baseline)
+                if style["runs"]:
+                    base = style["runs"][0]  # assuming single run for simplicity
+                    run.bold = base["bold"]
+                    run.italic = base["italic"]
+                    run.underline = base["underline"]
+                    run.font.name = base["font_name"]
+                    run.font.size = base["font_size"]
+                    run.font.color.rgb = base["font_color"]
 
                 trans_file.save(output_path)
-                print(f"Translated document saved successfully at: {output_path}")
-                return output_path
-            except Exception as e:
+            print(f"Translated document saved successfully at: {output_path}")
+            return output_path
+        except Exception as e:
                 print(f"Error reading translated document: {e}")
                 return
     else:
@@ -248,15 +296,34 @@ def transalted_doc_creation(file_path, translated_file, selected_document):
             print(f"Error getting the output directory path: {e}")
             return
         
-        # Write translated text into the new document
-        with open(output_path, "w+", encoding="utf-8") as out_file:
-            try:
-                for paragraph in translated_file:
-                    trans_file.add_paragraph(paragraph)
-                    trans_file.save(output_path)
-                print(f"Translated document saved successfully at: {output_path}")
-                return output_path
-            except Exception as e:
+        # Write partially translated text into the new document
+        try:
+#            for paragraph in translated_file:
+#                    trans_file.add_paragraph(paragraph)
+            for text, style in zip(translated_file, paragraph_info):
+                p = trans_file.add_paragraph()
+
+                # paragraph level style
+                p.style = style["style"]
+                p.alignment = style["alignment"]
+
+                # add translated text
+                run = p.add_run(text)
+
+                # apply run level styles (baseline)
+                if style["runs"]:
+                        base = style["runs"][0]  # assuming single run for simplicity
+                        run.bold = base["bold"]
+                        run.italic = base["italic"]
+                        run.underline = base["underline"]
+                        run.font.name = base["font_name"]
+                        run.font.size = base["font_size"]
+                        run.font.color.rgb = base["font_color"]
+
+                trans_file.save(output_path)
+            print(f"Translated document saved successfully at: {output_path}")
+            return output_path
+        except Exception as e:
                 print(f"Error reading translated document: {e}")
                 return
 
@@ -280,6 +347,9 @@ def main():
     # Read document
     selected_document = read_document(chosen_file)
 
+    # Get paragraph styles information
+    paragraphs_info = paragraphs_style_info(selected_document)
+
     # Translate sample text
     #translated_text = translator.translate("Hello world", 
     #                                       dest='es').text
@@ -287,11 +357,17 @@ def main():
 
     # Translate document and save to translated files directory
     translated_file = asyncio.run(
-        translate_text_googletrans(chosen_file, selected_document, target_lang="ES")
+        translate_text_googletrans(chosen_file, 
+                                   selected_document, 
+                                   target_lang="ES")
     )
 
     # Call function to create a new document with the translated text
-    transalted_doc_creation(chosen_file, translated_file, selected_document)
+    translated_doc_creation(chosen_file, 
+                            translated_file, 
+                            paragraphs_info,
+                            selected_document
+                            )
 
 if __name__=="__main__":
     main()
