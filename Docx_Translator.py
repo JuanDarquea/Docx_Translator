@@ -124,21 +124,23 @@ def paragraphs_style_info(selected_document):
     print("\nGetting paragraph styles information...")
     data = []
 
-    for p in selected_document.paragraphs:
+    for p_idx, p in enumerate(selected_document.paragraphs):
         info = {
                 "alignment":p.alignment, 
                 "style":p.style.name if p.style else "Normal",
                 "runs":[]
                 }
         
-        for r in p.runs:
+        for r_idx, r in enumerate(p.runs):
             info["runs"].append({
+                "text":r.text,
                 "bold":r.bold,
                 "italic":r.italic,
                 "underline":r.underline,
+                "strikethrough":r.font.strike,
                 "font_name":r.font.name,
                 "font_size":r.font.size.pt if r.font.size else None,
-                "font_color":r.font.color.rgb if r.font.color else None
+                "font_color":r.font.color.rgb if r.font.color.rgb else None
                 })
 
         data.append(info)
@@ -327,6 +329,50 @@ def translated_doc_creation(file_path, translated_file, paragraph_info, selected
                 print(f"Error reading translated document: {e}")
                 return
 
+# the following instance is for debugging and learning purposes only
+def debug_print_runs(selected_document):
+    """Debug function to print all runs in a paragraph"""
+    print()
+    print("-"*20, "Run Debbug Start", "-"*20)
+
+    for p_idx, paragraph in enumerate(selected_document.paragraphs, start=1):
+        print(f"Paragraph {p_idx}:")
+        print(f"Full text: {repr(paragraph.text)}")
+        print(f"Run count: {len(paragraph.runs)}")
+
+        for r_idx, run in enumerate(paragraph.runs, start=1):
+            print(f"    Run {r_idx}: {repr(run.text)} | "
+                  f"bold={run.bold}, italic={run.italic}, "
+                  f"underline={run.underline}, "
+                  f"font={run.font.name}, size={run.font.size}, "
+                  )
+
+        print("-"*50)
+    print("-"*20, "Run Debbug End", "-"*20)
+
+def debug_paragraph_runs(run_info):
+    """Debug function to print runs of all paragraph"""
+    print()
+    print("-"*20, "Paragraphs Run Info Start", "-"*20)
+
+    if not run_info:
+        print("No paragraphs found.")
+        return
+    
+    for p_idx, paragraph in enumerate(run_info, start=1):
+        print(f"Paragraph {p_idx} -")
+        print(f"Alignment: {paragraph['alignment']}")
+        print(f"Style: {paragraph['style']}")
+        print(f"Run count: {len(paragraph['runs'])}")
+
+        for r_idx, run in enumerate(paragraph["runs"], start=1):
+            print(f"Run {r_idx}:")
+            for key, value in run.items():
+                print(f"    {key}: {value}")
+            print()
+#        break  # only the first paragraph
+    print("-"*20, "All Paragraphs Run Info End", "-"*20)
+
 def main():
     """Main function to test file selection"""
     print("Select a .docx file to translate...")
@@ -346,6 +392,13 @@ def main():
     
     # Read document
     selected_document = read_document(chosen_file)
+
+    # Debug print runs information
+#    debug_print_runs(selected_document)
+
+    # Debug print first paragraph runs information
+    run_info = paragraphs_style_info(selected_document)
+    debug_paragraph_runs(run_info)
 
     # Get paragraph styles information
     paragraphs_info = paragraphs_style_info(selected_document)
