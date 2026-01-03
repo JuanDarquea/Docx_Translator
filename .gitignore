@@ -28,6 +28,7 @@ Translated_Docs/
 
 # Text files
 *.txt
+README.md
 
 # .gitignore itself
 .gitignore
