@@ -46,9 +46,9 @@ def select_docx_file():
             ("All FIles", "*.*") # show every type of file
         ],
         # use the environment variable to set the initial directory and a spare default value
-        initialdir=os.getenv("lin_test_docs_dir", os.getenv("app_tools_dir")) 
+        initialdir=os.getenv("lin_test_docs_dir", os.getenv("app_tools_dir"))
     )
-    
+
     # destroy the root dialog window
     root.destroy
 
@@ -56,23 +56,23 @@ def select_docx_file():
     return file_path if file_path else None
 
 def file_validation(file_path):
-    """Validate if a file path was selected""" 
+    """Validate if a file path was selected"""
     if file_path is None: # when no file is selected
-        return 
+        return
     elif not file_path.lower().endswith(".docx"): # validate file extension
         print("\nError!! The file selected must be a '.docx' file.")
-        return 
+        return
     else:
         try: # validate file existence
             # When file is selected
-            print(f"\nFile selected to translate: {file_path}", 
-                    f"\nFile path: {os.path.dirname(file_path)}", 
-                    f"\nFile name: {os.path.basename(file_path)}", 
+            print(f"\nFile selected to translate: {file_path}",
+                    f"\nFile path: {os.path.dirname(file_path)}",
+                    f"\nFile name: {os.path.basename(file_path)}",
                     f"\nFile size: {os.path.getsize(file_path)} KB", sep="")
             return True
         except FileExistsError: # file does not exist
             print(f"\nError!! The file {file_path} selected does not exist.")
-            return 
+            return
         except BadZipFile as e: # file is not a valid .docx file
             print(f"\nError!! The file selected is not a valid .docx file: {e}")
             return
@@ -82,14 +82,14 @@ def file_validation(file_path):
         except Exception as e: # other errors
             print(f"\nError validating the file: {e}")
         return
-        
+
 def read_document(file_path):
-    """Read the .docx file and return it as an object"""    
+    """Read the .docx file and return it as an object"""
     selected_document = Document(file_path)
     doc = [] # create empty list to store paragraphs
 
     # extract all text paragraphs from the document
-    try: 
+    try:
         print("\nReading document content...")
         for paragraph in selected_document.paragraphs:
 #            if paragraph.text.strip() != "": # skip empty paragraphs
@@ -98,7 +98,7 @@ def read_document(file_path):
         print("\nDocument content read successfully.")
     except Exception as e: # handle errors while reading document
         print(f"Error reading the document: {e}")
-        return 
+        return
 
     # print paragraph count
     total = len(selected_document.paragraphs)
@@ -107,9 +107,9 @@ def read_document(file_path):
     # print all paragraphs with a paragraph index as test
     for index, paragraph in enumerate(doc):
         if paragraph.strip() != "": # skip empty paragraphs
-            print(index + 1, 
-                  paragraph, f"Selected style: {selected_document.paragraphs[index].style.name}", 
-                  f"Alignment: {selected_document.paragraphs[index].alignment}", 
+            print(index + 1,
+                  paragraph, f"Selected style: {selected_document.paragraphs[index].style.name}",
+                  f"Alignment: {selected_document.paragraphs[index].alignment}",
                   f"Font: {selected_document.paragraphs[index].runs[0].font.name if selected_document.paragraphs[index].runs else "Default Font"}",
                   f"{len(selected_document.paragraphs[index].text)} characters",
                   sep = " - ")
@@ -126,11 +126,11 @@ def paragraphs_style_info(selected_document):
 
     for p_idx, p in enumerate(selected_document.paragraphs):
         info = {
-                "alignment":p.alignment, 
+                "alignment":p.alignment,
                 "style":p.style.name if p.style else "Normal",
                 "runs":[]
                 }
-        
+
         for r_idx, r in enumerate(p.runs):
             info["runs"].append({
                 "text":r.text,
@@ -154,13 +154,13 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
     if file_text is None:
         print("The file selected does not exist or could not be read.")
         return
-    
+
     print(f"\nTranslating document to {target_lang} using googletrans...")
     translated_file = []
     partial_file = []
     async with Translator() as translator:
         print()
-  
+
         try:
             for idx, paragraph in enumerate(file_text.paragraphs, start=1):
                 style_name = paragraph.style.name if paragraph.style else None
@@ -174,14 +174,14 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
                     print("<Empty paragraph> --> <Empty paragraph>")
                 else:
                         result = await translator.translate(
-                            paragraph.text, 
+                            paragraph.text,
                             dest=target_lang
                             )
                         print(paragraph.text, " --> ", result.text, sep="")
                         translated_file.append(result.text)
                         await asyncio.sleep(delay_between_requests)  # to avoid hitting rate limits
         except Exception as e:
-                print(f"\nError! Could not translate the paragraph {idx}, error type: {e}", 
+                print(f"\nError! Could not translate the paragraph {idx}, error type: {e}",
                       f"\nOriginal paragraph: {paragraph.text}")
                 partial_file = translated_file.copy()
 
@@ -209,16 +209,16 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
                 return partial_file
 
     print()
-    print("\nThe file output is the following list:", 
+    print("\nThe file output is the following list:",
           f"\n{translated_file if translated_file else partial_file}")
     print()
     return translated_file if translated_file else partial_file
 
 def translated_doc_creation(file_path, translated_file, paragraph_info, selected_document):
-    """Function to create an output file and 
+    """Function to create an output file and
     write translated text into the new file"""
     print("\nCreating output file...")
-    
+
     # Create output file
     trans_file = Document()
 
@@ -228,10 +228,10 @@ def translated_doc_creation(file_path, translated_file, paragraph_info, selected
         name_no_ext, ext = os.path.splitext(base_name)
         print()
         print(f"Chosen base name --> {base_name}")
-    except Exception as e: 
+    except Exception as e:
         print(f"Error reading the file: {e}")
         return
-        
+
     # Create new file name
     new_name = name_no_ext + "_ES" + ext
     timestamp = datetime.now().strftime("%y%m%d_%H%M")
@@ -244,7 +244,7 @@ def translated_doc_creation(file_path, translated_file, paragraph_info, selected
             if not output_dir:
                 print("Error!! No output directory defined in environment variables.")
                 return
-            output_path = os.path.join(output_dir, 
+            output_path = os.path.join(output_dir,
                                     new_name)
             print(f"Chosen file dir --> {output_dir}")
             print(f"New file name --> {new_name}")
@@ -252,7 +252,7 @@ def translated_doc_creation(file_path, translated_file, paragraph_info, selected
         except Exception as e:
             print(f"Error getting the output directory path: {e}")
             return
-        
+
         # Write translated text into the new document
         try:
 #           for paragraph in translated_file:
@@ -289,7 +289,7 @@ def translated_doc_creation(file_path, translated_file, paragraph_info, selected
             if not output_dir:
                 print("Error!! No output directory defined in environment variables.")
                 return
-            output_path = os.path.join(output_dir, 
+            output_path = os.path.join(output_dir,
                                     partial_name)
             print(f"Chosen file dir --> {output_dir}")
             print(f"New file name --> {partial_name}")
@@ -297,7 +297,7 @@ def translated_doc_creation(file_path, translated_file, paragraph_info, selected
         except Exception as e:
             print(f"Error getting the output directory path: {e}")
             return
-        
+
         # Write partially translated text into the new document
         try:
 #            for paragraph in translated_file:
@@ -358,7 +358,7 @@ def debug_paragraph_runs(run_info):
     if not run_info:
         print("No paragraphs found.")
         return
-    
+
     for p_idx, paragraph in enumerate(run_info, start=1):
         print(f"Paragraph {p_idx} -")
         print(f"Alignment: {paragraph['alignment']}")
@@ -382,14 +382,14 @@ def main():
 
     # Close if cancelled and no file selected
     if not chosen_file:
-        print("\nUser closed the window before selecting a file.", 
+        print("\nUser closed the window before selecting a file.",
               "\nGoodbye!")
         return
 
     # Validate file
     if file_validation(chosen_file) is None:
         return
-    
+
     # Read document
     selected_document = read_document(chosen_file)
 
@@ -404,20 +404,20 @@ def main():
     paragraphs_info = paragraphs_style_info(selected_document)
 
     # Translate sample text
-    #translated_text = translator.translate("Hello world", 
+    #translated_text = translator.translate("Hello world",
     #                                       dest='es').text
     #print(f"\nTranslated text: {translated_text}")
 
     # Translate document and save to translated files directory
     translated_file = asyncio.run(
-        translate_text_googletrans(chosen_file, 
-                                   selected_document, 
+        translate_text_googletrans(chosen_file,
+                                   selected_document,
                                    target_lang="ES")
     )
 
     # Call function to create a new document with the translated text
-    translated_doc_creation(chosen_file, 
-                            translated_file, 
+    translated_doc_creation(chosen_file,
+                            translated_file,
                             paragraphs_info,
                             selected_document
                             )

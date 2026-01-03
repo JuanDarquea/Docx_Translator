@@ -156,7 +156,7 @@ This project is open source and available under the **MIT License**.
 
 ## 👤 Author
 
-**Juan Darquea**  
+**Juan Darquea**
 Python learner · Linux user · Document automation enthusiast
 
 Feel free to open an issue, suggest improvements, or use this project as a learning reference.
@@ -168,4 +168,3 @@ Feel free to open an issue, suggest improvements, or use this project as a learn
 - `python-docx` for Word document handling
 - Translation APIs for making automation possible
 - The open-source community for constant inspiration
-
