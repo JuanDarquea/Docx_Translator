@@ -6,7 +6,6 @@ Test.ipynb
 
 # Environment variables
 *.env
-Project_env.env
 
 # Python virtual environments
 .venv/
@@ -18,7 +17,6 @@ __pycache__/
 
 # IDE
 .vscode/*
-.vscode/settings.json
 
 # Output directories
 Translated_Docs/
@@ -30,5 +28,3 @@ Translated_Docs/
 *.txt
 README.md
 
-# .gitignore itself
-.gitignore
