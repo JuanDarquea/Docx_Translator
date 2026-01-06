@@ -177,7 +177,7 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
                             paragraph.text,
                             dest=target_lang
                             )
-                        print(paragraph.text, " --> ", result.text, sep="")
+                        print(paragraph.text, result.text, style_name, sep="--> ")
                         translated_file.append(result.text)
                         await asyncio.sleep(delay_between_requests)  # to avoid hitting rate limits
         except Exception as e:
@@ -227,7 +227,7 @@ def translated_doc_creation(file_path, translated_file, paragraph_info, selected
         base_name = os.path.basename(file_path)
         name_no_ext, ext = os.path.splitext(base_name)
         print()
-        print(f"Chosen base name --> {base_name}")
+        print(f"Chosen base name: {base_name}")
     except Exception as e:
         print(f"Error reading the file: {e}")
         return
@@ -246,9 +246,9 @@ def translated_doc_creation(file_path, translated_file, paragraph_info, selected
                 return
             output_path = os.path.join(output_dir,
                                     new_name)
-            print(f"Chosen file dir --> {output_dir}")
-            print(f"New file name --> {new_name}")
-            print(f"New file path --> {output_path}\n")
+            print(f"Chosen file dir: {output_dir}")
+            print(f"New file name: {new_name}")
+            print(f"New file path: {output_path}\n")
         except Exception as e:
             print(f"Error getting the output directory path: {e}")
             return
@@ -396,17 +396,12 @@ def main():
     # Debug print runs information
 #    debug_print_runs(selected_document)
 
-    # Debug print first paragraph runs information
+    # Debug print paragraph runs information
     run_info = paragraphs_style_info(selected_document)
     debug_paragraph_runs(run_info)
 
     # Get paragraph styles information
     paragraphs_info = paragraphs_style_info(selected_document)
-
-    # Translate sample text
-    #translated_text = translator.translate("Hello world",
-    #                                       dest='es').text
-    #print(f"\nTranslated text: {translated_text}")
 
     # Translate document and save to translated files directory
     translated_file = asyncio.run(
