@@ -1,4 +1,4 @@
-# Docx_Translator
+# docx_Translator
 import os
 
 from googletrans import Translator # to translate text
@@ -12,9 +12,10 @@ from zipfile import BadZipFile # to handle invalid .docx files
 import deepl # to translate text
 from docx import Document   # to read and write .docx files
 from datetime import datetime
+import re
 import time
 
-# Load the .env file from the same directory as this script
+# load the .env file from the same directory as this script
 try:
     env_path = Path(__file__).parent / "Project_env.env"
 except NameError:
@@ -22,7 +23,7 @@ except NameError:
 
 load_dotenv(env_path) # load environment variables from .env file
 
-# Define rate limit parameters
+# define rate limit parameters
 rate_limit_minute = 450  # translator plan rate limit: 450 requests per minute
 delay_between_requests = 60/rate_limit_minute  # calculate delay between requests in seconds
 max_retries = 5 # maximum number of retries for failed requests
@@ -55,6 +56,7 @@ def select_docx_file():
     # Return None instead of empty string for better logic
     return file_path if file_path else None
 
+#
 def file_validation(file_path):
     """Validate if a file path was selected"""
     if file_path is None: # when no file is selected
@@ -83,6 +85,7 @@ def file_validation(file_path):
             print(f"\nError validating the file: {e}")
         return
 
+#
 def read_document(file_path):
     """Read the .docx file and return it as an object"""
     selected_document = Document(file_path)
@@ -119,6 +122,7 @@ def read_document(file_path):
 #            index - 1 # do not count empty paragraphs
     return selected_document if selected_document else None
 
+#
 def paragraphs_style_info(selected_document):
     """Function to get style information of paragraphs in the document"""
     print("\nGetting paragraph styles information...")
@@ -149,7 +153,11 @@ def paragraphs_style_info(selected_document):
     return data
 
 async def translate_text_googletrans(file_path, selected_document, target_lang="ES"):
-    """Translate text using googletrans module"""
+    """
+    Translate text using googletrans module.
+    Returns:
+
+    """
     file_text = selected_document
     if file_text is None:
         print("The file selected does not exist or could not be read.")
@@ -213,10 +221,158 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
           f"\n{translated_file if translated_file else partial_file}")
     print()
     return translated_file if translated_file else partial_file
+    """
+    Build a character-level formatting mao from paragraph.
+    Returns:
+    - full_text(str)
+    - char_formats(list of dics, one per character)
+    """
+    full_text = ''
+    char_formats = []
+
+    for run in paragraph.runs: # iterate through each run in the paragraph
+        run_text = run.text # get the text of the run
+
+        run_format = { # get the formatting of the run as a dictionary
+            "bold": run.bold,
+            "italic": run.italic,
+            "underline": run.underline,
+            "strikethrough": run.font.strike,
+            "font_name": run.font.name,
+            "font_size": run.font.size.pt if run.font.size else None,
+            "font_color": run.font.color.rgb if run.font.color.rgb else None
+        }
+
+        for char in run_text: # iterate through each character in the run text
+            full_text += char # append character to full text
+            char_formats.append(run_format.copy()) # append a copy of the run format to char_formats
+
+    return full_text, char_formats
+
+
+    """
+    This instance rebuilds runs on a word level based on translated text and word formats.
+    Returns:
+    - paragraph with rebuilt runs
+    """
+    if not paragraph:
+        paragraph.clear()
+        return
+
+    translated_words = re.findall(r'\S+|\s+', translated_text)
+
+    current_format = None
+    current_run = None
+
+    orig_len = len(word_formats)
+    trans_len = len(translated_text)
+
+    for i, word in enumerate(translated_text):
+        orig_index = min(
+            int(i * orig_len / trans_len),
+            orig_len - 1
+        )
+
+        fmt = word_formats[orig_index]
+
+        if fmt != current_format:
+            current_run = paragraph.add_run(word)
+            current_run.bold = fmt['bold']
+            current_run.italic = fmt['italic']
+            current_run.underline = fmt['underline']
+            current_run.font.strike = fmt['strikethrough']
+            current_run.font.name = fmt['font_name']
+            current_run.font.size = fmt['font_size']
+            current_run.font.color.rgb = fmt['font_color']
+            current_format = fmt
+        else:
+            current_run.add_text(word)
+
+def build_run_spans(paragraph):
+    """
+    Build run spans for paragraph.
+    Returns:
+    - spans (list of dicts, one per run)
+    - each dict contains text and formatting info
+    """
+    spans = []
+
+    for run in paragraph.runs:
+        if not run.text:
+            continue
+
+        spans.append({
+            "text": run.text,
+            "bold": run.bold,
+            "italic": run.italic,
+            "underline": run.underline,
+            "strikethrough": run.font.strike,
+            "font_name": run.font.name,
+            "font_size": run.font.size,
+            "font_color": run.font.color.rgb,
+        })
+    return spans
+
+def split_text_into_spans(text, n):
+    """
+    Split text into n spans.
+    Returns:
+    - list of n spans
+    - each span is a substring of the original text
+    """
+
+    if n <= 1:
+        return [text]
+
+    words = text.split()
+    avg = max(1,
+              len(words) // n)
+    spans = []
+    idx = 0
+
+    for i in range(n):
+        if i == n - 1:
+            spans.append(' '.join(words[idx:]))
+        else:
+            spans.append(' '.join(words[idx:idx + avg]))
+        idx += avg
+
+    return spans
+
+def rebuild_run_from_spans(paragraph, translated_text, spans):
+    """
+    Rebuild runs in a paragraph based on translated text and original spans.
+    Returns:
+    - paragraph with rebuilt runs
+    - each run has formatting from the corresponding original span
+    """
+
+    paragraph.clear() # clear existing runs
+
+    if not translated_text or not spans:
+        paragraph.add_run(translated_text)
+        return
+
+    translated_spans = split_text_into_spans(translated_text, len(spans))
+
+    for span_text, fmt in zip(translated_spans, spans):
+        run = paragraph.add_run(span_text + " ")
+        run.bold = fmt["bold"]
+        run.italic = fmt["italic"]
+        run.underline = fmt["underline"]
+        run.font.strike = fmt["strikethrough"]
+        run.font.name = fmt["font_name"]
+        run.font.size = fmt["font_size"]
+        run.font.color.rgb = fmt["font_color"]
 
 def translated_doc_creation(file_path, translated_file, paragraph_info, selected_document):
-    """Function to create an output file and
-    write translated text into the new file"""
+    """
+    Function to create an output file and write translated text into the new file.
+    Returns:
+    - output file path if successful or None if failed
+    - prints error messages if any error occurs
+    - creates a new .docx file with translated text and preserved formatting
+    """
     print("\nCreating output file...")
 
     # Create output file
@@ -255,27 +411,23 @@ def translated_doc_creation(file_path, translated_file, paragraph_info, selected
 
         # Write translated text into the new document
         try:
-#           for paragraph in translated_file:
-#                    trans_file.add_paragraph(paragraph)
-            for text, style in zip(translated_file, paragraph_info):
+            #
+            for idx, text in enumerate(translated_file):
+                #
+                orig_p = selected_document.paragraphs[idx]
+
+                #
                 p = trans_file.add_paragraph()
 
                 # paragraph level style
-                p.style = style["style"]
-                p.alignment = style["alignment"]
+                p.style = orig_p.style
+                p.alignment = orig_p.alignment
 
-                # add translated text
-                run = p.add_run(text)
+                #
+                spans = build_run_spans(orig_p)
 
-                # apply run level styles (baseline)
-                if style["runs"]:
-                    base = style["runs"][0]  # assuming single run for simplicity
-                    run.bold = base["bold"]
-                    run.italic = base["italic"]
-                    run.underline = base["underline"]
-                    run.font.name = base["font_name"]
-                    run.font.size = base["font_size"]
-                    run.font.color.rgb = base["font_color"]
+                #
+                rebuild_run_from_spans(p, text, spans)
 
                 trans_file.save(output_path)
             print(f"Translated document saved successfully at: {output_path}")
@@ -300,27 +452,25 @@ def translated_doc_creation(file_path, translated_file, paragraph_info, selected
 
         # Write partially translated text into the new document
         try:
-#            for paragraph in translated_file:
-#                    trans_file.add_paragraph(paragraph)
-            for text, style in zip(translated_file, paragraph_info):
+            for idx, text in enumerate(translated_file):
+                #
+                orig_p = selected_document.paragraphs[idx]
+
+                #
                 p = trans_file.add_paragraph()
 
                 # paragraph level style
-                p.style = style["style"]
-                p.alignment = style["alignment"]
+                p.style = orig_p.style
+                p.alignment = orig_p.alignment
 
                 # add translated text
                 run = p.add_run(text)
 
-                # apply run level styles (baseline)
-                if style["runs"]:
-                        base = style["runs"][0]  # assuming single run for simplicity
-                        run.bold = base["bold"]
-                        run.italic = base["italic"]
-                        run.underline = base["underline"]
-                        run.font.name = base["font_name"]
-                        run.font.size = base["font_size"]
-                        run.font.color.rgb = base["font_color"]
+                #
+                spans = build_run_spans(orig_p)
+
+                #
+                rebuild_run_from_spans(p, text, spans)
 
                 trans_file.save(output_path)
             print(f"Translated document saved successfully at: {output_path}")
@@ -329,9 +479,13 @@ def translated_doc_creation(file_path, translated_file, paragraph_info, selected
                 print(f"Error reading translated document: {e}")
                 return
 
-# the following instance is for debugging and learning purposes only
+# the following instances are for debugging and learning purposes only
 def debug_print_runs(selected_document):
-    """Debug function to print all runs in a paragraph"""
+    """
+    Debug function to print all runs in a paragraph.
+    Returns:
+    - prints all runs in each paragraph with their formatting details
+    """
     print()
     print("-"*20, "Run Debbug Start", "-"*20)
 
@@ -350,8 +504,13 @@ def debug_print_runs(selected_document):
         print("-"*50)
     print("-"*20, "Run Debbug End", "-"*20)
 
+# the following instance is for debugging and learning purposes only
 def debug_paragraph_runs(run_info):
-    """Debug function to print runs of all paragraph"""
+    """
+    Debug function to print runs of all paragraph
+    Returns:
+    - prints all runs in each paragraph with their formatting details
+    """
     print()
     print("-"*20, "Paragraphs Run Info Start", "-"*20)
 
@@ -374,43 +533,61 @@ def debug_paragraph_runs(run_info):
     print("-"*20, "All Paragraphs Run Info End", "-"*20)
 
 def main():
-    """Main function to test file selection"""
+    """
+    Main function.
+    Orchestrates the document translation process.
+    1. Prompts user to select a .docx file
+    2. Validates the selected file
+    3. Reads the document content
+    4. Gets paragraph styles information
+    5. Translates the document text
+    6. Creates a new document with the translated text
+    7. Saves the translated document to the specified directory
+    8. Handles errors and logs them if translation fails
+    9. Prints debug information if needed
+    10. Exits gracefully if user cancels file selection
+    11. Uses asynchronous translation to improve performance
+    12. Preserves original formatting in the translated document
+    13. Supports environment variables for configuration
+    14. Provides informative console output throughout the process
+    15. Implements rate limitting to avoid hitting API limits
+    """
     print("Select a .docx file to translate...")
 
     # get file selected from user
     chosen_file = select_docx_file()
 
-    # Close if cancelled and no file selected
+    # close if cancelled and no file selected
     if not chosen_file:
         print("\nUser closed the window before selecting a file.",
               "\nGoodbye!")
         return
 
-    # Validate file
+    # validate file
     if file_validation(chosen_file) is None:
         return
 
-    # Read document
+    # read document
     selected_document = read_document(chosen_file)
 
-    # Debug print runs information
+    # debug print runs information
 #    debug_print_runs(selected_document)
 
-    # Debug print paragraph runs information
-    run_info = paragraphs_style_info(selected_document)
-    debug_paragraph_runs(run_info)
+    # debug print paragraph runs information
+#    run_info = paragraphs_style_info(selected_document)
+#    debug_paragraph_runs(run_info)
 
-    # Get paragraph styles information
+    # get paragraph styles information
     paragraphs_info = paragraphs_style_info(selected_document)
 
-    # Translate document and save to translated files directory
+    # translate document and save to translated files directory
     translated_file = asyncio.run(
         translate_text_googletrans(chosen_file,
                                    selected_document,
                                    target_lang="ES")
     )
 
-    # Call function to create a new document with the translated text
+    # call function to create a new document with the translated text
     translated_doc_creation(chosen_file,
                             translated_file,
                             paragraphs_info,
