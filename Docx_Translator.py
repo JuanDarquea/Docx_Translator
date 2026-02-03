@@ -12,8 +12,7 @@ from docx import Document   # to read and write .docx files
 from datetime import datetime
 
 # unused imports
-import deepl # to translate text
-import re
+import deepl # to translate text with contextual accuracy
 import time
 
 # load the .env file from the same directory as this script
@@ -291,96 +290,54 @@ def translated_doc_creation(file_path, translated_file, selected_document):
         print(f"Error reading the file: {e}")
         return
 
-    # Create new file name
-    new_name = name_no_ext + "_ES" + ext
-    timestamp = datetime.now().strftime("%y%m%d_%H%M")
-    partial_name = f"{name_no_ext}_PARTIAL_ES_{timestamp}{ext}"
-
     # Assign output file path
-    if len(translated_file) == len(selected_document.paragraphs):
-        try:
-            output_dir = os.getenv("lin_translated_docs_dir") or os.getenv("translated_docs_dir") or os.path.dirname(file_path)
-            if not output_dir:
-                print("Error!! No output directory defined in environment variables.")
-                return
-            output_path = os.path.join(output_dir,
-                                    new_name)
-            print(f"Chosen file dir: {output_dir}")
-            print(f"New file name: {new_name}")
-            print(f"New file path: {output_path}\n")
-        except Exception as e:
-            print(f"Error getting the output directory path: {e}")
+    is_partial = len(translated_file) != len(selected_document.paragraphs)
+    try:
+        output_dir = (os.getenv("lin_translated_docs_dir")
+        or os.getenv("translated_docs_dir")
+        or os.path.dirname(file_path))
+
+        # check if output directory is defined
+        if not output_dir:
+            print("Error!! No output directory defined in environment variables.")
             return
 
-        # Write translated text into the new document
-        try:
-            #
-            for idx, text in enumerate(translated_file):
-                #
-                orig_p = selected_document.paragraphs[idx]
+        # create output file name based on translation completeness
+        if is_partial:
+            timestamp = datetime.now().strftime("%y%m%d_%H%M")
+            output_name = f"{name_no_ext}_PARTIAL_ES_{timestamp}{ext}"
+        else:
+            output_name = f"{name_no_ext}_ES{ext}"
 
-                #
-                p = trans_file.add_paragraph()
+        output_path = os.path.join(output_dir,
+                                output_name)
+        print(f"Chosen file dir: {output_dir}")
+        print(f"New file name: {output_name}")
+        print(f"New file path: {output_path}\n")
+    except Exception as e:
+        print(f"Error getting the output directory path: {e}")
+        return
 
-                # paragraph level style
-                p.style = orig_p.style
-                p.alignment = orig_p.alignment
+    # Write translated text into the new document
+    try:
+        for idx, text in enumerate(translated_file): # iterate over translated paragraphs
+            orig_p = selected_document.paragraphs[idx] # get original paragraph
 
-                #
-                spans = build_run_spans(orig_p)
+            p = trans_file.add_paragraph() # add new paragraph to the translated document
+            # paragraph level style
+            p.style = orig_p.style
+            p.alignment = orig_p.alignment
 
-                #
-                rebuild_run_from_spans(p, text, spans)
+            spans = build_run_spans(orig_p) # get original runs formatting
+            rebuild_run_from_spans(p, text, spans) # rebuild runs with original formatting
 
-                trans_file.save(output_path)
-            print(f"Translated document saved successfully at: {output_path}")
-            return output_path
-        except Exception as e:
-                print(f"Error reading translated document: {e}")
-                return
-    else:
-        try:
-            output_dir = os.getenv("lin_translated_docs_dir") or os.getenv("translated_docs_dir") or os.path.dirname(file_path)
-            if not output_dir:
-                print("Error!! No output directory defined in environment variables.")
-                return
-            output_path = os.path.join(output_dir,
-                                    partial_name)
-            print(f"Chosen file dir --> {output_dir}")
-            print(f"New file name --> {partial_name}")
-            print(f"New file path --> {output_path}\n")
-        except Exception as e:
-            print(f"Error getting the output directory path: {e}")
+        trans_file.save(output_path)
+        print(f"Translated document saved successfully at: {output_path}")
+        return output_path
+
+    except Exception as e:
+            print(f"Error reading translated document: {e}")
             return
-
-        # Write partially translated text into the new document
-        try:
-            for idx, text in enumerate(translated_file):
-                #
-                orig_p = selected_document.paragraphs[idx]
-
-                #
-                p = trans_file.add_paragraph()
-
-                # paragraph level style
-                p.style = orig_p.style
-                p.alignment = orig_p.alignment
-
-                # add translated text
-                run = p.add_run(text)
-
-                #
-                spans = build_run_spans(orig_p)
-
-                #
-                rebuild_run_from_spans(p, text, spans)
-
-                trans_file.save(output_path)
-            print(f"Translated document saved successfully at: {output_path}")
-            return output_path
-        except Exception as e:
-                print(f"Error reading translated document: {e}")
-                return
 
 # the following instances are for debugging and learning purposes only
 def debug_print_runs(selected_document):
