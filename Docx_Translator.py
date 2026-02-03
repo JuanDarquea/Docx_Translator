@@ -4,14 +4,15 @@ import os
 from googletrans import Translator # to translate text
 import asyncio
 from pathlib import Path
-from operator import index
 from tkinter import Tk
 from tkinter import filedialog as fd
 from dotenv import load_dotenv # to load environment variables from .env file
 from zipfile import BadZipFile # to handle invalid .docx files
-import deepl # to translate text
 from docx import Document   # to read and write .docx files
 from datetime import datetime
+
+# unused imports
+import deepl # to translate text
 import re
 import time
 
@@ -56,7 +57,6 @@ def select_docx_file():
     # Return None instead of empty string for better logic
     return file_path if file_path else None
 
-#
 def file_validation(file_path):
     """Validate if a file path was selected"""
     if file_path is None: # when no file is selected
@@ -85,7 +85,6 @@ def file_validation(file_path):
             print(f"\nError validating the file: {e}")
         return
 
-#
 def read_document(file_path):
     """Read the .docx file and return it as an object"""
     selected_document = Document(file_path)
@@ -121,36 +120,6 @@ def read_document(file_path):
             print(index + 1,"<Empty paragraph>", sep=" - ")
 #            index - 1 # do not count empty paragraphs
     return selected_document if selected_document else None
-
-#
-def paragraphs_style_info(selected_document):
-    """Function to get style information of paragraphs in the document"""
-    print("\nGetting paragraph styles information...")
-    data = []
-
-    for p_idx, p in enumerate(selected_document.paragraphs):
-        info = {
-                "alignment":p.alignment,
-                "style":p.style.name if p.style else "Normal",
-                "runs":[]
-                }
-
-        for r_idx, r in enumerate(p.runs):
-            info["runs"].append({
-                "text":r.text,
-                "bold":r.bold,
-                "italic":r.italic,
-                "underline":r.underline,
-                "strikethrough":r.font.strike,
-                "font_name":r.font.name,
-                "font_size":r.font.size.pt if r.font.size else None,
-                "font_color":r.font.color.rgb if r.font.color.rgb else None
-                })
-
-        data.append(info)
-
-    print("Paragraph styles information obtained successfully.")
-    return data
 
 async def translate_text_googletrans(file_path, selected_document, target_lang="ES"):
     """
@@ -221,72 +190,6 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
           f"\n{translated_file if translated_file else partial_file}")
     print()
     return translated_file if translated_file else partial_file
-    """
-    Build a character-level formatting mao from paragraph.
-    Returns:
-    - full_text(str)
-    - char_formats(list of dics, one per character)
-    """
-    full_text = ''
-    char_formats = []
-
-    for run in paragraph.runs: # iterate through each run in the paragraph
-        run_text = run.text # get the text of the run
-
-        run_format = { # get the formatting of the run as a dictionary
-            "bold": run.bold,
-            "italic": run.italic,
-            "underline": run.underline,
-            "strikethrough": run.font.strike,
-            "font_name": run.font.name,
-            "font_size": run.font.size.pt if run.font.size else None,
-            "font_color": run.font.color.rgb if run.font.color.rgb else None
-        }
-
-        for char in run_text: # iterate through each character in the run text
-            full_text += char # append character to full text
-            char_formats.append(run_format.copy()) # append a copy of the run format to char_formats
-
-    return full_text, char_formats
-
-
-    """
-    This instance rebuilds runs on a word level based on translated text and word formats.
-    Returns:
-    - paragraph with rebuilt runs
-    """
-    if not paragraph:
-        paragraph.clear()
-        return
-
-    translated_words = re.findall(r'\S+|\s+', translated_text)
-
-    current_format = None
-    current_run = None
-
-    orig_len = len(word_formats)
-    trans_len = len(translated_text)
-
-    for i, word in enumerate(translated_text):
-        orig_index = min(
-            int(i * orig_len / trans_len),
-            orig_len - 1
-        )
-
-        fmt = word_formats[orig_index]
-
-        if fmt != current_format:
-            current_run = paragraph.add_run(word)
-            current_run.bold = fmt['bold']
-            current_run.italic = fmt['italic']
-            current_run.underline = fmt['underline']
-            current_run.font.strike = fmt['strikethrough']
-            current_run.font.name = fmt['font_name']
-            current_run.font.size = fmt['font_size']
-            current_run.font.color.rgb = fmt['font_color']
-            current_format = fmt
-        else:
-            current_run.add_text(word)
 
 def build_run_spans(paragraph):
     """
@@ -365,7 +268,7 @@ def rebuild_run_from_spans(paragraph, translated_text, spans):
         run.font.size = fmt["font_size"]
         run.font.color.rgb = fmt["font_color"]
 
-def translated_doc_creation(file_path, translated_file, paragraph_info, selected_document):
+def translated_doc_creation(file_path, translated_file, selected_document):
     """
     Function to create an output file and write translated text into the new file.
     Returns:
@@ -577,9 +480,6 @@ def main():
 #    run_info = paragraphs_style_info(selected_document)
 #    debug_paragraph_runs(run_info)
 
-    # get paragraph styles information
-    paragraphs_info = paragraphs_style_info(selected_document)
-
     # translate document and save to translated files directory
     translated_file = asyncio.run(
         translate_text_googletrans(chosen_file,
@@ -590,7 +490,6 @@ def main():
     # call function to create a new document with the translated text
     translated_doc_creation(chosen_file,
                             translated_file,
-                            paragraphs_info,
                             selected_document
                             )
 
