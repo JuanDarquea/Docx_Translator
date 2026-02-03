@@ -198,13 +198,18 @@ def build_run_spans(paragraph):
     - each dict contains text and formatting info
     """
     spans = []
+    total_words = 0
 
     for run in paragraph.runs:
-        if not run.text:
+        words = run.text.split()
+        if not words:
             continue
 
+        count = len(words)
+        total_words += count
+
         spans.append({
-            "text": run.text,
+            "word_count": len(words),
             "bold": run.bold,
             "italic": run.italic,
             "underline": run.underline,
@@ -213,7 +218,7 @@ def build_run_spans(paragraph):
             "font_size": run.font.size,
             "font_color": run.font.color.rgb,
         })
-    return spans
+    return spans, total_words
 
 def split_text_into_spans(text, n):
     """
@@ -241,31 +246,70 @@ def split_text_into_spans(text, n):
 
     return spans
 
-def rebuild_run_from_spans(paragraph, translated_text, spans):
+def rebuild_run_from_spans(paragraph, translated_text, spans, original_total_words):
     """
     Rebuild runs in a paragraph based on translated text and original spans.
     Returns:
     - paragraph with rebuilt runs
     - each run has formatting from the corresponding original span
     """
+    for run in paragraph.runs:
+        run.text = "" # clear existing runs
 
-    paragraph.clear() # clear existing runs
+    translated_words = translated_text.split()
+    total_words = len(translated_words)
 
-    if not translated_text or not spans:
+    if not translated_words or not  spans:
         paragraph.add_run(translated_text)
         return
 
-    translated_spans = split_text_into_spans(translated_text, len(spans))
+    # number of spans that have content
+    active_spans = len(spans)
 
-    for span_text, fmt in zip(translated_spans, spans):
-        run = paragraph.add_run(span_text + " ")
-        run.bold = fmt["bold"]
-        run.italic = fmt["italic"]
-        run.underline = fmt["underline"]
-        run.font.strike = fmt["strikethrough"]
-        run.font.name = fmt["font_name"]
-        run.font.size = fmt["font_size"]
-        run.font.color.rgb = fmt["font_color"]
+    # compute ideal word count per span
+    ideal_counts = [span["word_count"] / original_total_words * total_words
+                    for span in spans]
+
+    # allocate words safely
+    allocations = []
+    remaining_words = total_words
+    remaining_spans = active_spans
+
+    for i, ideal in enumerate(ideal_counts):
+        remaining_spans -= 1
+
+        if remaining_spans == 0:
+            take = remaining_words
+        else:
+            take = max(1, int(round(ideal)))
+            take = min(take, remaining_words - remaining_spans)
+
+        allocations.append(take)
+        remaining_words -= take
+
+    # build runs
+    index = 0
+    for span, take in zip(spans, allocations):
+        chunk = translated_words[index:index + take]
+        index += take
+
+        if not chunk:
+            continue
+
+        run = paragraph.add_run(" ".join(chunk) + " ")
+
+        run.bold = span["bold"]
+        run.italic = span["italic"]
+        run.underline = span["underline"]
+        run.font.strike = span["strikethrough"]
+        run.font.name = span["font_name"]
+        run.font.size = span["font_size"]
+        if span["font_color"]:
+            run.font.color.rgb = span["font_color"]
+
+    # leftover words (translation longer than original)
+    #if word_index < len(words):
+    #    paragraph.add_run(" ".join(words[word_index:]))
 
 def translated_doc_creation(file_path, translated_file, selected_document):
     """
@@ -328,8 +372,8 @@ def translated_doc_creation(file_path, translated_file, selected_document):
             p.style = orig_p.style
             p.alignment = orig_p.alignment
 
-            spans = build_run_spans(orig_p) # get original runs formatting
-            rebuild_run_from_spans(p, text, spans) # rebuild runs with original formatting
+            spans, total_words = build_run_spans(orig_p) # get original run formatting
+            rebuild_run_from_spans(p, text, spans, total_words) # rebuild run with original formatting
 
         trans_file.save(output_path)
         print(f"Translated document saved successfully at: {output_path}")
