@@ -135,7 +135,6 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
     translated_file = []
     partial_file = []
     async with Translator() as translator:
-        print()
 
         try:
             for idx, paragraph in enumerate(file_text.paragraphs, start=1):
@@ -147,13 +146,13 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
 
                 if paragraph.text.strip() == "": # skip empty paragraphs
                     translated_file.append("") # keep empty paragraphs
-                    print("<Empty paragraph> --> <Empty paragraph>")
+                    #print("<Empty paragraph> --> <Empty paragraph>")
                 else:
                         result = await translator.translate(
                             paragraph.text,
                             dest=target_lang
                             )
-                        print(paragraph.text, result.text, style_name, sep="--> ")
+                        #print(paragraph.text, result.text, style_name, sep="--> ")
                         translated_file.append(result.text)
                         await asyncio.sleep(delay_between_requests)  # to avoid hitting rate limits
         except Exception as e:
@@ -172,6 +171,7 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
                 error_log_file = f"{name_no_ext}_PARTIAL_ERROR_LOG.txt"
                 error_log = os.path.join(output_dir,
                                     error_log_file)
+
                 with open(error_log, "a+", encoding="utf-8") as log:
                     try:
                         line = f"\n[{timestamp}] - Paragraph #{idx} = {paragraph.text}- ERROR = {e}"
@@ -254,10 +254,11 @@ def rebuild_run_from_spans(paragraph, translated_text, spans, original_total_wor
     - each run has formatting from the corresponding original span
     """
     for run in paragraph.runs:
-        run.text = "" # clear existing runs
+        run.text = "" # clear existing runs safelly
 
     translated_words = translated_text.split()
     total_words = len(translated_words)
+    #print('Document total quantity of words =', total_words)
 
     if not translated_words or not  spans:
         paragraph.add_run(translated_text)
@@ -265,10 +266,12 @@ def rebuild_run_from_spans(paragraph, translated_text, spans, original_total_wor
 
     # number of spans that have content
     active_spans = len(spans)
+    #print('Number of spans that have content =', active_spans)
 
     # compute ideal word count per span
     ideal_counts = [span["word_count"] / original_total_words * total_words
                     for span in spans]
+    #print('Ideal span count =', ideal_counts)
 
     # allocate words safely
     allocations = []
@@ -382,6 +385,28 @@ def translated_doc_creation(file_path, translated_file, selected_document):
     except Exception as e:
             print(f"Error reading translated document: {e}")
             return
+
+def translate_table(table, translator_func):
+    for row in table.rows:
+        for cell in row.cells:
+            for paragraph in cell.paragraphs:
+                original_text = paragraph.text.strip()
+                if not original_text:
+                    continue
+
+                translated_text = translator_func(original_text)
+                spans, total_words = build_run_spans(paragraph)
+
+                # clear paragraph
+                for run in paragraph.runs:
+                    run.text = ""
+
+                rebuild_run_from_spans(
+                    paragraph,
+                    translated_text,
+                    spans,
+                    total_words
+                    )
 
 # the following instances are for debugging and learning purposes only
 def debug_print_runs(selected_document):
