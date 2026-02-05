@@ -386,27 +386,53 @@ def translated_doc_creation(file_path, translated_file, selected_document):
             print(f"Error reading translated document: {e}")
             return
 
-def translate_table(table, translator_func):
-    for row in table.rows:
-        for cell in row.cells:
-            for paragraph in cell.paragraphs:
-                original_text = paragraph.text.strip()
-                if not original_text:
-                    continue
+def inspect_tables(selected_document):
+    """"""
+    if not selected_document.tables:
+        print(f'\nNo tables found in the document.')
+        return
 
-                translated_text = translator_func(original_text)
-                spans, total_words = build_run_spans(paragraph)
+    print(f'\nFound {len(selected_document.tables)} tables.\n')
 
-                # clear paragraph
-                for run in paragraph.runs:
-                    run.text = ""
+    for t_idx, table in enumerate(selected_document.tables):
+        t_idx += 1
+        print(f'Table {t_idx}:',
+              f'    Rows: {len(table.rows)}')
 
-                rebuild_run_from_spans(
-                    paragraph,
-                    translated_text,
-                    spans,
-                    total_words
-                    )
+        for r_idx, row in enumerate(table.rows):
+            print(f'        Row {r_idx + 1}: Cells = {len(row.cells)}')
+
+            for c_idx, cell in enumerate(row.cells):
+                print(f'            Cell {c_idx + 1}: Paragraphs = {len(cell.paragraphs)}')
+
+                for p_idx, paragraph in enumerate(cell.paragraphs):
+                    text = paragraph.text.strip()
+                    print(f'                Paragraph {p_idx + 1}: "{text}"')
+
+        print('-'*20, f'Table {t_idx} end', '-'*20) # spacing between tables
+
+async def translate_table(table, target_lang="ES"):
+    async with Translator() as translator:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    original_text = paragraph.text.strip()
+                    if not original_text:
+                        continue
+
+                    translated_text = await translator.translate(original_text, target_lang)
+                    spans, total_words = build_run_spans(paragraph)
+
+                    # clear paragraph
+                    for run in paragraph.runs:
+                        run.text = ""
+
+                    rebuild_run_from_spans(
+                        paragraph,
+                        translated_text.text,
+                        spans,
+                        total_words
+                        )
 
 # the following instances are for debugging and learning purposes only
 def debug_print_runs(selected_document):
@@ -498,6 +524,23 @@ def main():
 
     # read document
     selected_document = read_document(chosen_file)
+
+    # inspect for tables
+    inspect_tables(selected_document)
+
+    # translate tables if there is any
+    if selected_document.tables:
+        print('\nTranslating tables...')
+        for table in selected_document.tables:
+            asyncio.run(translate_table(table))
+
+    # temporary table file inspection
+    temp_path = os.path.join(
+        os.getenv("lin_translated_docs_dir"),
+        'TEMP_TABLE_INSPECTION.docx'
+    )
+    selected_document.save(temp_path)
+    print(f'\nTemporary table inspecition file saved at: {temp_path}')
 
     # debug print runs information
 #    debug_print_runs(selected_document)
