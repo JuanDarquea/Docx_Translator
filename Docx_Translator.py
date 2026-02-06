@@ -106,17 +106,17 @@ def read_document(file_path):
     print(f"Paragraph count: {total}\n")
 
     # print all paragraphs with a paragraph index as test
-    for index, paragraph in enumerate(doc):
-        if paragraph.strip() != "": # skip empty paragraphs
-            print(index + 1,
-                  paragraph, f"Selected style: {selected_document.paragraphs[index].style.name}",
-                  f"Alignment: {selected_document.paragraphs[index].alignment}",
-                  f"Font: {selected_document.paragraphs[index].runs[0].font.name if selected_document.paragraphs[index].runs else "Default Font"}",
-                  f"{len(selected_document.paragraphs[index].text)} characters",
-                  sep = " - ")
+#    for index, paragraph in enumerate(doc):
+#        if paragraph.strip() != "": # skip empty paragraphs
+#            print(index + 1,
+#                  paragraph, f"Selected style: {selected_document.paragraphs[index].style.name}",
+#                  f"Alignment: {selected_document.paragraphs[index].alignment}",
+#                  f"Font: {selected_document.paragraphs[index].runs[0].font.name if selected_document.paragraphs[index].runs else "Default Font"}",
+#                 f"{len(selected_document.paragraphs[index].text)} characters",
+#                  sep = " - ")
 #            print(f"P{index + 1}: {paragraph}") # alternative print format
-        else:
-            print(index + 1,"<Empty paragraph>", sep=" - ")
+#        else:
+#            print(index + 1,"<Empty paragraph>", sep=" - ")
 #            index - 1 # do not count empty paragraphs
     return selected_document if selected_document else None
 
@@ -137,7 +137,13 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
     async with Translator() as translator:
 
         try:
-            for idx, paragraph in enumerate(file_text.paragraphs, start=1):
+            paragraphs = get_non_table_paragraphs(file_text)
+
+            for idx, paragraph in enumerate(paragraphs, start=1):
+
+                if is_table_paragraph(paragraph):
+                    continue # skip paragraphs inside tables
+
                 style_name = paragraph.style.name if paragraph.style else None
 
                 # Simulate an error for testing purposes
@@ -146,13 +152,11 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
 
                 if paragraph.text.strip() == "": # skip empty paragraphs
                     translated_file.append("") # keep empty paragraphs
-                    #print("<Empty paragraph> --> <Empty paragraph>")
                 else:
                         result = await translator.translate(
                             paragraph.text,
                             dest=target_lang
                             )
-                        #print(paragraph.text, result.text, style_name, sep="--> ")
                         translated_file.append(result.text)
                         await asyncio.sleep(delay_between_requests)  # to avoid hitting rate limits
         except Exception as e:
@@ -184,10 +188,10 @@ async def translate_text_googletrans(file_path, selected_document, target_lang="
 
                 return partial_file
 
-    print()
-    print("\nThe file output is the following list:",
-          f"\n{translated_file if translated_file else partial_file}")
-    print()
+#    print()
+#   print("\nThe file output is the following list:",
+#         f"\n{translated_file if translated_file else partial_file}")
+#    print()
     return translated_file if translated_file else partial_file
 
 def build_run_spans(paragraph):
@@ -314,7 +318,7 @@ def rebuild_run_from_spans(paragraph, translated_text, spans, original_total_wor
     #if word_index < len(words):
     #    paragraph.add_run(" ".join(words[word_index:]))
 
-def translated_doc_creation(file_path, translated_file, selected_document):
+async def translated_doc_creation(file_path, translated_file, selected_document):
     """
     Function to create an output file and write translated text into the new file.
     Returns:
@@ -367,9 +371,9 @@ def translated_doc_creation(file_path, translated_file, selected_document):
 
     # Write translated text into the new document
     try:
-        for idx, text in enumerate(translated_file): # iterate over translated paragraphs
-            orig_p = selected_document.paragraphs[idx] # get original paragraph
+        source_paragraphs = get_non_table_paragraphs(selected_document)
 
+        for orig_p, text in zip(source_paragraphs, translated_file): # iterate over translated paragraphs
             p = trans_file.add_paragraph() # add new paragraph to the translated document
             # paragraph level style
             p.style = orig_p.style
@@ -377,6 +381,12 @@ def translated_doc_creation(file_path, translated_file, selected_document):
 
             spans, total_words = build_run_spans(orig_p) # get original run formatting
             rebuild_run_from_spans(p, text, spans, total_words) # rebuild run with original formatting
+
+        if selected_document.tables:
+            print(f'Appending {len(selected_document.tables)} table(s) to output document...')
+
+            for table in selected_document.tables:
+                await translate_and_copy_table(table, trans_file, translator)
 
         trans_file.save(output_path)
         print(f"Translated document saved successfully at: {output_path}")
@@ -411,6 +421,13 @@ def inspect_tables(selected_document):
 
         print('-'*20, f'Table {t_idx} end', '-'*20) # spacing between tables
 
+def is_table_paragraph(paragraph):
+    return paragraph._p.getparent().tag.endswith('tc')
+
+def get_non_table_paragraphs(document):
+    return [ p for p in document.paragraphs
+            if not is_table_paragraph(p) ]
+
 async def translate_table(table, target_lang="ES"):
     async with Translator() as translator:
         for row in table.rows:
@@ -433,6 +450,45 @@ async def translate_table(table, target_lang="ES"):
                         spans,
                         total_words
                         )
+
+async def translate_and_copy_table(source_table, target_document, translator, target_lang="ES"):
+    rows = len(source_table.rows)
+    cols = len(source_table.columns)
+
+    target_table = target_document.add_table(rows=rows, cols=cols)
+    target_table.style = "Table Grid"
+    target_table.autofit = True
+    target_table.allow_autofit = True
+
+    for r_idx, row in enumerate(source_table.rows):
+        for c_idx, cell in enumerate(row.cells):
+            target_cell = target_table.cell(r_idx,
+                                            c_idx)
+
+            # clear default empty paragraph
+            target_cell.text = ""
+
+            for paragraph in cell.paragraphs:
+                text = paragraph.text.strip()
+
+                new_p = target_cell.add_paragraph()
+
+                # paragraph level formatting
+                new_p.style = paragraph.style
+                new_p.alignment = paragraph.alignment
+
+                if not text:
+                    continue
+
+                # translate table text
+                translated = await translator.translate(text,
+                                                  dest=target_lang)
+
+                spans, total_words = build_run_spans(paragraph)
+                rebuild_run_from_spans(new_p,
+                                       translated.text,
+                                       spans,
+                                       total_words)
 
 # the following instances are for debugging and learning purposes only
 def debug_print_runs(selected_document):
@@ -487,7 +543,7 @@ def debug_paragraph_runs(run_info):
 #        break  # only the first paragraph
     print("-"*20, "All Paragraphs Run Info End", "-"*20)
 
-def main():
+async def main():
     """
     Main function.
     Orchestrates the document translation process.
@@ -528,19 +584,12 @@ def main():
     # inspect for tables
     inspect_tables(selected_document)
 
-    # translate tables if there is any
-    if selected_document.tables:
-        print('\nTranslating tables...')
-        for table in selected_document.tables:
-            asyncio.run(translate_table(table))
-
     # temporary table file inspection
-    temp_path = os.path.join(
-        os.getenv("lin_translated_docs_dir"),
-        'TEMP_TABLE_INSPECTION.docx'
-    )
-    selected_document.save(temp_path)
-    print(f'\nTemporary table inspecition file saved at: {temp_path}')
+#    temp_path = os.path.join(
+#        os.getenv("lin_translated_docs_dir"),
+#        'TEMP_TABLE_INSPECTION.docx')
+#    selected_document.save(temp_path)
+#    print(f'\nTemporary table inspecition file saved at: {temp_path}')
 
     # debug print runs information
 #    debug_print_runs(selected_document)
@@ -550,17 +599,16 @@ def main():
 #    debug_paragraph_runs(run_info)
 
     # translate document and save to translated files directory
-    translated_file = asyncio.run(
-        translate_text_googletrans(chosen_file,
+    translated_file = await translate_text_googletrans(chosen_file,
                                    selected_document,
                                    target_lang="ES")
-    )
 
     # call function to create a new document with the translated text
-    translated_doc_creation(chosen_file,
-                            translated_file,
-                            selected_document
-                            )
+    output_path = await translated_doc_creation(chosen_file,
+                                                translated_file,
+                                                selected_document)
+    if output_path:
+        os.system(f"open {output_path}")
 
 if __name__=="__main__":
-    main()
+    asyncio.run(main())
