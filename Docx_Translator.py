@@ -137,8 +137,10 @@ async def translate_text_preserving_whitespace(text, target_lang):
     if text.strip() == "":
         return text
 
-    leading_ws = re.match(r"^\s*", text).group(0)
-    trailing_ws = re.search(r"\s*$", text).group(0)
+    leading_match = re.match(r"^\s*", text)
+    trailing_match = re.search(r"\s*$", text)
+    leading_ws = leading_match.group(0) if leading_match else ""
+    trailing_ws = trailing_match.group(0) if trailing_match else ""
     core_end = len(text) - len(trailing_ws)
     core_text = text[len(leading_ws):core_end]
 
