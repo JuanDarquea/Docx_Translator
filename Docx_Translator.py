@@ -1,5 +1,6 @@
 # docx_Translator
 import os
+import re
 
 from googletrans import Translator # to translate text
 import asyncio
@@ -9,9 +10,8 @@ from tkinter import filedialog as fd
 from dotenv import load_dotenv # to load environment variables from .env file
 from zipfile import BadZipFile # to handle invalid .docx files
 from docx import Document   # to read and write .docx files
-from datetime import datetime
-from docx.shared import RGBColor  # to handle font colors in .docx files
-from docx.shared import Inches
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 # unused imports
 import deepl # to translate text with contextual accuracy
@@ -53,7 +53,7 @@ def select_docx_file():
     )
 
     # destroy the root dialog window
-    root.destroy
+    root.destroy()
 
     # Return None instead of empty string for better logic
     return file_path if file_path else None
@@ -122,200 +122,85 @@ def read_document(file_path):
 #            index - 1 # do not count empty paragraphs
     return selected_document if selected_document else None
 
-async def translate_text_googletrans(file_path, selected_document, target_lang="ES"):
+def iter_document_blocks(document):
+    """Yield body items in document order as ('paragraph'|'table', object)."""
+    for child in document.element.body.iterchildren():
+        if child.tag.endswith('}p'):
+            yield "paragraph", Paragraph(child, document)
+        elif child.tag.endswith('}tbl'):
+            yield "table", Table(child, document)
+
+async def translate_text_preserving_whitespace(text, target_lang):
+    """Translate text while preserving whitespace-only chunks unchanged."""
+    if text is None or text == "":
+        return text
+    if text.strip() == "":
+        return text
+
+    leading_ws = re.match(r"^\s*", text).group(0)
+    trailing_ws = re.search(r"\s*$", text).group(0)
+    core_end = len(text) - len(trailing_ws)
+    core_text = text[len(leading_ws):core_end]
+
+    if core_text == "":
+        return text
+
+    result = await translator.translate(core_text, dest=target_lang)
+    await asyncio.sleep(delay_between_requests)
+    return f"{leading_ws}{result.text}{trailing_ws}"
+
+def fix_run_boundary_punctuation_from_texts(source_texts, target_runs):
     """
-    Translate text using googletrans module.
-    Returns:
-
+    Remove punctuation introduced at run boundaries when it did not exist in source.
+    This avoids artifacts like: "ella. objetivos" when source boundary had no dot.
     """
-    file_text = selected_document
-    if file_text is None:
-        print("The file selected does not exist or could not be read.")
-        return
+    limit = min(len(source_texts), len(target_runs))
 
-    print(f"\nTranslating document to {target_lang} using googletrans...")
-    translated_file = []
-    partial_file = []
+    for i in range(1, limit):
+        src_prev = source_texts[i - 1].rstrip()
+        src_next = source_texts[i].lstrip()
+        tgt_prev = target_runs[i - 1]
 
-    try:
-        paragraphs = get_non_table_paragraphs(file_text)
-
-        for idx, paragraph in enumerate(paragraphs, start=1):
-
-            if is_table_paragraph(paragraph):
-                continue # skip paragraphs inside tables
-
-            style_name = paragraph.style.name if paragraph.style else None
-
-            # Simulate an error for testing purposes
-#                if idx == 7:
-#                    raise Exception(f"Simulated error for testing purposes.")
-
-            if paragraph.text.strip() == "": # skip empty paragraphs
-                translated_file.append("") # keep empty paragraphs
-            else:
-                    result = await translator.translate(
-                        paragraph.text,
-                        dest=target_lang)
-                    translated_file.append(result.text)
-
-                    await asyncio.sleep(delay_between_requests)  # to avoid hitting rate limits
-    except Exception as e:
-            print(f"\nError! Could not translate the paragraph {idx}, error type: {e}",
-                    f"\nOriginal paragraph: {paragraph.text}")
-            partial_file = translated_file.copy()
-
-            # Create error log .txt file
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            output_dir = os.getenv("lin_error_logs_dir") or os.getenv("translated_docs_dir") or os.path.dirname(file_path)
-            if not output_dir:
-                print("\nError!! No output directory defined in environment variables.")
-                return
-            base_name = os.path.basename(file_path)
-            name_no_ext, ext = os.path.splitext(base_name)
-            error_log_file = f"{name_no_ext}_PARTIAL_ERROR_LOG.txt"
-            error_log = os.path.join(output_dir,
-                                error_log_file)
-
-            with open(error_log, "a+", encoding="utf-8") as log:
-                try:
-                    line = f"\n[{timestamp}] - Paragraph #{idx} = {paragraph.text}- ERROR = {e}"
-                    log.write(line)
-                    print(f"\nError log saved successfully at: {error_log}")
-                    return partial_file
-                except Exception as e:
-                    print(f"\nError writing error log file: {e}")
-                    return
-
-            return partial_file
-
-#    print()
-#   print("\nThe file output is the following list:",
-#         f"\n{translated_file if translated_file else partial_file}")
-#    print()
-    return translated_file if translated_file else partial_file
-
-def build_run_spans(paragraph):
-    """
-    Build run spans for paragraph.
-    Returns:
-    - spans (list of dicts, one per run)
-    - each dict contains text and formatting info
-    """
-    spans = []
-    total_words = 0
-
-    for run in paragraph.runs:
-        words = run.text.split()
-        if not words:
+        if not src_prev or not src_next:
             continue
 
-        count = len(words)
-        total_words += count
+        src_prev_ended_with_dot = src_prev.endswith(".")
+        src_next_starts_word = src_next[0].isalpha() or src_next[0].isdigit()
 
-        spans.append({
-            "word_count": len(words),
-            "bold": run.bold,
-            "italic": run.italic,
-            "underline": run.underline,
-            "strikethrough": run.font.strike,
-            "font_name": run.font.name,
-            "font_size": run.font.size,
-            "font_color": run.font.color.rgb,
-        })
-    return spans, total_words
+        tgt_prev_text = tgt_prev.text
+        tgt_prev_stripped = tgt_prev_text.rstrip()
+        tgt_prev_has_dot = tgt_prev_stripped.endswith(".")
 
-def split_text_into_spans(text, n):
-    """
-    Split text into n spans.
-    Returns:
-    - list of n spans
-    - each span is a substring of the original text
-    """
+        if (not src_prev_ended_with_dot) and src_next_starts_word and tgt_prev_has_dot:
+            # Remove only one trailing period and keep any trailing whitespace.
+            m = re.search(r"\.(\s*)$", tgt_prev_text)
+            if m:
+                tgt_prev.text = tgt_prev_text[:m.start()] + m.group(1)
 
-    if n <= 1:
-        return [text]
+async def translate_paragraph_in_place(paragraph, target_lang):
+    """Translate one paragraph in place, preserving list/paragraph/run formatting."""
+    if paragraph.runs:
+        source_run_texts = [run.text for run in paragraph.runs]
 
-    words = text.split()
-    avg = max(1,
-              len(words) // n)
-    spans = []
-    idx = 0
+        for idx, run in enumerate(paragraph.runs):
+            source_text = source_run_texts[idx]
+            run.text = await translate_text_preserving_whitespace(source_text, target_lang)
 
-    for i in range(n):
-        if i == n - 1:
-            spans.append(' '.join(words[idx:]))
-        else:
-            spans.append(' '.join(words[idx:idx + avg]))
-        idx += avg
-
-    return spans
-
-def rebuild_run_from_spans(paragraph, translated_text, spans, original_total_words):
-    """
-    Rebuild runs in a paragraph based on translated text and original spans.
-    Returns:
-    - paragraph with rebuilt runs
-    - each run has formatting from the corresponding original span
-    """
-    for run in paragraph.runs:
-        run.text = "" # clear existing runs safelly
-
-    translated_words = translated_text.split()
-    total_words = len(translated_words)
-    #print('Document total quantity of words =', total_words)
-
-    if not translated_words or not  spans:
-        paragraph.add_run(translated_text)
+        fix_run_boundary_punctuation_from_texts(source_run_texts, paragraph.runs)
         return
 
-    # number of spans that have content
-    active_spans = len(spans)
-    #print('Number of spans that have content =', active_spans)
+    if paragraph.text and paragraph.text.strip():
+        paragraph.text = await translate_text_preserving_whitespace(paragraph.text, target_lang)
 
-    # compute ideal word count per span
-    ideal_counts = [span["word_count"] / original_total_words * total_words
-                    for span in spans]
-    #print('Ideal span count =', ideal_counts)
+async def translate_table_in_place(table, target_lang):
+    """Translate text in each table cell paragraph in place."""
+    print(f"Translating table: {len(table.rows)} row(s), {len(table.columns)} col(s)")
+    for row in table.rows:
+        for cell in row.cells:
+            for paragraph in cell.paragraphs:
+                await translate_paragraph_in_place(paragraph, target_lang)
 
-    # allocate words safely
-    allocations = []
-    remaining_words = total_words
-    remaining_spans = active_spans
-
-    for i, ideal in enumerate(ideal_counts):
-        remaining_spans -= 1
-
-        if remaining_spans == 0:
-            take = remaining_words
-        else:
-            take = max(1, int(round(ideal)))
-            take = min(take, remaining_words - remaining_spans)
-
-        allocations.append(take)
-        remaining_words -= take
-
-    # build runs
-    index = 0
-    for span, take in zip(spans, allocations):
-        chunk = translated_words[index:index + take]
-        index += take
-
-        if not chunk:
-            continue
-
-        run = paragraph.add_run(" ".join(chunk) + " ")
-
-        run.bold = span["bold"]
-        run.italic = span["italic"]
-        run.underline = span["underline"]
-        run.font.strike = span["strikethrough"]
-        run.font.name = span["font_name"]
-        run.font.size = span["font_size"]
-        if span["font_color"]:
-            run.font.color.rgb = span["font_color"]
-
-async def translated_doc_creation(file_path, translated_file, selected_document):
+async def translated_doc_creation(file_path, selected_document, target_lang="ES"):
     """
     Function to create an output file and write translated text into the new file.
     Returns:
@@ -325,8 +210,8 @@ async def translated_doc_creation(file_path, translated_file, selected_document)
     """
     print("\nCreating output file...")
 
-    # Create output file
-    trans_file = Document()
+    # Translate in place on source structure to preserve numbering/list definitions.
+    trans_file = selected_document
 
     # Select original file path
     try:
@@ -338,8 +223,6 @@ async def translated_doc_creation(file_path, translated_file, selected_document)
         print(f"Error reading the file: {e}")
         return
 
-    # Assign output file path
-    is_partial = len(translated_file) != len(selected_document.paragraphs)
     try:
         output_dir = (os.getenv("lin_translated_docs_dir")
         or os.getenv("translated_docs_dir")
@@ -350,12 +233,7 @@ async def translated_doc_creation(file_path, translated_file, selected_document)
             print("Error!! No output directory defined in environment variables.")
             return
 
-        # create output file name based on translation completeness
-        if is_partial:
-            timestamp = datetime.now().strftime("%y%m%d_%H%M")
-            output_name = f"{name_no_ext}_PARTIAL_ES_{timestamp}{ext}"
-        else:
-            output_name = f"{name_no_ext}_ES{ext}"
+        output_name = f"{name_no_ext}_{target_lang.upper()}{ext}"
 
         output_path = os.path.join(output_dir,
                                 output_name)
@@ -366,34 +244,13 @@ async def translated_doc_creation(file_path, translated_file, selected_document)
         print(f"Error getting the output directory path: {e}")
         return
 
-    trans_file.add_paragraph("") # add an empty paragraph to ensure the document is not empty
-
-    #print(type(translator))
-    # create tables in the new document if a table is found in the ofiginal document
-    if selected_document.tables:
-        for table in selected_document.tables:
-            await translate_and_copy_table(table, trans_file, translator)
-            print("Tables after copy:", len(trans_file.tables))
-
-    trans_file.add_paragraph("") # add an empty paragraph to ensure the document is not empty
-
-    # Write translated text into the new document
     try:
-        source_paragraphs = get_non_table_paragraphs(selected_document)
+        for block_type, block in iter_document_blocks(trans_file):
+            if block_type == "paragraph":
+                await translate_paragraph_in_place(block, target_lang)
+            elif block_type == "table":
+                await translate_table_in_place(block, target_lang)
 
-        for orig_p, text in zip(source_paragraphs, translated_file): # iterate over translated paragraphs
-            p = trans_file.add_paragraph() # add new paragraph to the translated document
-            # paragraph level style
-            p.style = orig_p.style
-            p.alignment = orig_p.alignment
-
-            spans, total_words = build_run_spans(orig_p) # get original run formatting
-            rebuild_run_from_spans(p, text, spans, total_words) # rebuild run with original formatting
-
-        if selected_document.tables:
-            print(f'Appending {len(selected_document.tables)} table(s) to output document...')
-
-        print("Tables in output doc:", len(trans_file.tables))
         trans_file.save(output_path)
         print(f"Translated document saved successfully at: {output_path}")
         return output_path
@@ -412,91 +269,20 @@ def inspect_tables(selected_document):
 
     for t_idx, table in enumerate(selected_document.tables):
         t_idx += 1
-        print(f'Table {t_idx}:',
-              f'    Rows: {len(table.rows)}')
+#        print(f'Table {t_idx}:',
+#              f'    Rows: {len(table.rows)}')
 
         for r_idx, row in enumerate(table.rows):
-            print(f'        Row {r_idx + 1}: Cells = {len(row.cells)}')
+#            print(f'        Row {r_idx + 1}: Cells = {len(row.cells)}')
 
             for c_idx, cell in enumerate(row.cells):
-                print(f'            Cell {c_idx + 1}: Paragraphs = {len(cell.paragraphs)}')
+#                print(f'            Cell {c_idx + 1}: Paragraphs = {len(cell.paragraphs)}')
 
                 for p_idx, paragraph in enumerate(cell.paragraphs):
                     text = paragraph.text.strip()
-                    print(f'                Paragraph {p_idx + 1}: "{text}"')
+  #                  print(f'                Paragraph {p_idx + 1}: "{text}"')
 
-        print('-'*20, f'Table {t_idx} end', '-'*20) # spacing between tables
-
-def is_table_paragraph(paragraph):
-    return paragraph._p.getparent().tag.endswith('tc')
-
-def get_non_table_paragraphs(document):
-    return [ p for p in document.paragraphs
-            if not is_table_paragraph(p) ]
-
-def translate_table(table, target_lang="ES"):
-    for row in table.rows:
-        for cell in row.cells:
-            for paragraph in cell.paragraphs:
-                original_text = paragraph.text.strip()
-                if not original_text:
-                    continue
-
-                translated_text = translator.translate(original_text, target_lang)
-                spans, total_words = build_run_spans(paragraph)
-
-                # clear paragraph
-                for run in paragraph.runs:
-                    run.text = ""
-
-                rebuild_run_from_spans(
-                    paragraph,
-                    translated_text.text,
-                    spans,
-                    total_words
-                    )
-
-async def translate_and_copy_table(source_table, target_document, translator, target_lang="ES"):
-    rows = len(source_table.rows)
-    cols = len(source_table.columns)
-
-    target_table = target_document.add_table(rows=rows, cols=cols)
-    target_table.style = "Table Grid"
-
-    # force visibility of table
-    for col in target_table.columns:
-        for cell in col.cells:
-            cell.width = Inches(2)
-
-    target_table.autofit = True
-    target_table.allow_autofit = True
-
-    for r_idx, row in enumerate(source_table.rows):
-        for c_idx, cell in enumerate(row.cells):
-
-            target_cell = target_table.cell(r_idx,
-                                            c_idx)
-
-            new_p = target_cell.paragraphs[0]
-            # paragraph level formatting
-            new_p.style = target_cell.paragraphs[0].style
-            new_p.alignment = target_cell.paragraphs[0].alignment
-            new_p.clear()
-
-            for paragraph in cell.paragraphs:
-                text = paragraph.text.strip()
-                if not text:
-                    continue
-
-                # translate table text
-                translated = await translator.translate(text,
-                                                  dest=target_lang)
-
-                spans, total_words = build_run_spans(paragraph)
-                rebuild_run_from_spans(new_p,
-                                       translated.text,
-                                       spans,
-                                       total_words)
+  #      print('-'*20, f'Table {t_idx} end', '-'*20) # spacing between tables
 
 # the following instances are for debugging and learning purposes only
 def debug_print_runs(selected_document):
@@ -552,25 +338,6 @@ def debug_paragraph_runs(run_info):
     print("-"*20, "All Paragraphs Run Info End", "-"*20)
 
 async def main():
-    """
-    Main function.
-    Orchestrates the document translation process.
-    1. Prompts user to select a .docx file
-    2. Validates the selected file
-    3. Reads the document content
-    4. Gets paragraph styles information
-    5. Translates the document text
-    6. Creates a new document with the translated text
-    7. Saves the translated document to the specified directory
-    8. Handles errors and logs them if translation fails
-    9. Prints debug information if needed
-    10. Exits gracefully if user cancels file selection
-    11. Uses asynchronous translation to improve performance
-    12. Preserves original formatting in the translated document
-    13. Supports environment variables for configuration
-    14. Provides informative console output throughout the process
-    15. Implements rate limitting to avoid hitting API limits
-    """
     print("Select a .docx file to translate...")
 
     # get file selected from user
@@ -592,15 +359,10 @@ async def main():
     # inspect for tables
     inspect_tables(selected_document)
 
-    # translate document and save to translated files directory
-    translated_file = await translate_text_googletrans(chosen_file,
-                                   selected_document,
-                                   target_lang="ES")
-
-    # call function to create a new document with the translated text
+    # translate document and create output preserving structure and formatting
     output_path = await translated_doc_creation(chosen_file,
-                                          translated_file,
-                                          selected_document)
+                                                selected_document,
+                                                target_lang="ES")
 #    if output_path:
 #        os.system(f"open {output_path}")
 
