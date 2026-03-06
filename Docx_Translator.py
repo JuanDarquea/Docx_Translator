@@ -33,6 +33,15 @@ max_retries = 5 # maximum number of retries for failed requests
 # create google transalator obeject
 translator = Translator()
 
+NON_TRANSLATABLE_PATTERNS = [
+    re.compile(r"https?://[^\s]+|www\.[^\s]+", re.IGNORECASE),  # URLs
+    re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b"),  # emails
+    re.compile(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b"),  # dates
+    re.compile(r"[$€£¥]\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?|\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?[$€£¥]\b"),  # currency
+    re.compile(r"\b\d+(?:[.,]\d+)?%"),  # percentages
+    re.compile(r"\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\b"),  # numbers
+]
+
 # define a variable to select the file to be translated
 def select_docx_file():
     """Open a file dialog and return the selected filepath to translate"""
@@ -130,6 +139,19 @@ def iter_document_blocks(document):
         elif child.tag.endswith('}tbl'):
             yield "table", Table(child, document)
 
+def iter_container_blocks(container):
+    """Yield paragraph/table blocks in order for document, header, or footer containers."""
+    if hasattr(container, "element") and hasattr(container.element, "body"):
+        parent_elm = container.element.body
+    else:
+        parent_elm = container._element
+
+    for child in parent_elm.iterchildren():
+        if child.tag.endswith('}p'):
+            yield "paragraph", Paragraph(child, container)
+        elif child.tag.endswith('}tbl'):
+            yield "table", Table(child, container)
+
 async def translate_text_preserving_whitespace(text, target_lang):
     """Translate text while preserving whitespace-only chunks unchanged."""
     if text is None or text == "":
@@ -147,9 +169,39 @@ async def translate_text_preserving_whitespace(text, target_lang):
     if core_text == "":
         return text
 
-    result = await translator.translate(core_text, dest=target_lang)
+    protected_text, replacements = protect_non_translatables(core_text)
+    result = await translator.translate(protected_text, dest=target_lang)
     await asyncio.sleep(delay_between_requests)
-    return f"{leading_ws}{result.text}{trailing_ws}"
+    translated_core = restore_non_translatables(result.text, replacements)
+    return f"{leading_ws}{translated_core}{trailing_ws}"
+
+def protect_non_translatables(text):
+    """
+    Replace non-translatable fragments with placeholders and return:
+    (protected_text, replacements_dict)
+    """
+    protected = text
+    replacements = {}
+    token_index = 0
+
+    for pattern in NON_TRANSLATABLE_PATTERNS:
+        def _replace(match):
+            nonlocal token_index
+            token = f"__NTX_{token_index}__"
+            token_index += 1
+            replacements[token] = match.group(0)
+            return token
+
+        protected = pattern.sub(_replace, protected)
+
+    return protected, replacements
+
+def restore_non_translatables(text, replacements):
+    """Restore protected placeholders to their original values."""
+    restored = text
+    for token, original in replacements.items():
+        restored = restored.replace(token, original)
+    return restored
 
 def fix_run_boundary_punctuation_from_texts(source_texts, target_runs):
     """
@@ -179,12 +231,60 @@ def fix_run_boundary_punctuation_from_texts(source_texts, target_runs):
             if m:
                 tgt_prev.text = tgt_prev_text[:m.start()] + m.group(1)
 
+def is_page_number_run(run):
+    """
+    Detect runs that belong to page-number fields (PAGE/NUMPAGES/SECTIONPAGES).
+    These runs must not be translated.
+    """
+    page_field_markers = ("PAGE", "NUMPAGES", "SECTIONPAGES")
+    word_ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    # 1) <w:fldSimple w:instr="...PAGE...">
+    parent = run._r.getparent()
+    while parent is not None:
+        if parent.tag.endswith('}fldSimple'):
+            instr = (parent.get(f"{word_ns}instr") or "").upper()
+            if any(marker in instr for marker in page_field_markers):
+                return True
+        parent = parent.getparent()
+
+    # 2) Complex field instructions inside run descendants (<w:instrText>)
+    for node in run._r.iter():
+        if node.tag.endswith('}instrText'):
+            instr_text = (node.text or "").upper()
+            if any(marker in instr_text for marker in page_field_markers):
+                return True
+
+    return False
+
+def has_field_code_nodes(run):
+    """True when run contains field code XML nodes that must not be modified."""
+    for node in run._r.iter():
+        if node.tag.endswith('}fldChar') or node.tag.endswith('}instrText'):
+            return True
+    return False
+
 async def translate_paragraph_in_place(paragraph, target_lang):
     """Translate one paragraph in place, preserving list/paragraph/run formatting."""
     if paragraph.runs:
         source_run_texts = [run.text for run in paragraph.runs]
+        in_field = False
 
         for idx, run in enumerate(paragraph.runs):
+            # Never rewrite field-code runs; it can break PAGE/NUMPAGES rendering.
+            if has_field_code_nodes(run):
+                for node in run._r.iter():
+                    if node.tag.endswith('}fldChar'):
+                        fld_char_type = node.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}fldCharType")
+                        if fld_char_type == "begin":
+                            in_field = True
+                        elif fld_char_type == "end":
+                            in_field = False
+                continue
+
+            # Keep all field-result runs untouched while inside a field.
+            if in_field or is_page_number_run(run):
+                continue
             source_text = source_run_texts[idx]
             run.text = await translate_text_preserving_whitespace(source_text, target_lang)
 
@@ -201,6 +301,32 @@ async def translate_table_in_place(table, target_lang):
         for cell in row.cells:
             for paragraph in cell.paragraphs:
                 await translate_paragraph_in_place(paragraph, target_lang)
+
+async def translate_header_footer_in_place(document, target_lang):
+    """Translate all unique headers and footers in place, preserving page-number fields."""
+    visited = set()
+
+    for section in document.sections:
+        containers = (
+            ("header_default", section.header),
+            ("header_first", section.first_page_header),
+            ("header_even", section.even_page_header),
+            ("footer_default", section.footer),
+            ("footer_first", section.first_page_footer),
+            ("footer_even", section.even_page_footer),
+        )
+
+        for container_type, container in containers:
+            key = (container_type, id(container._element))
+            if key in visited:
+                continue
+            visited.add(key)
+
+            for block_type, block in iter_container_blocks(container):
+                if block_type == "paragraph":
+                    await translate_paragraph_in_place(block, target_lang)
+                elif block_type == "table":
+                    await translate_table_in_place(block, target_lang)
 
 async def translated_doc_creation(file_path, selected_document, target_lang="ES"):
     """
@@ -253,6 +379,8 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
             elif block_type == "table":
                 await translate_table_in_place(block, target_lang)
 
+        await translate_header_footer_in_place(trans_file, target_lang)
+
         trans_file.save(output_path)
         print(f"Translated document saved successfully at: {output_path}")
         return output_path
@@ -269,19 +397,19 @@ def inspect_tables(selected_document):
 
     print(f'\nFound {len(selected_document.tables)} tables.\n')
 
-    for t_idx, table in enumerate(selected_document.tables):
-        t_idx += 1
-#        print(f'Table {t_idx}:',
-#              f'    Rows: {len(table.rows)}')
+ #   for t_idx, table in enumerate(selected_document.tables):
+ #       t_idx += 1
+ #       print(f'Table {t_idx}:',
+ #             f'    Rows: {len(table.rows)}')
 
-        for r_idx, row in enumerate(table.rows):
-#            print(f'        Row {r_idx + 1}: Cells = {len(row.cells)}')
+ #       for r_idx, row in enumerate(table.rows):
+ #           print(f'        Row {r_idx + 1}: Cells = {len(row.cells)}')
 
-            for c_idx, cell in enumerate(row.cells):
-#                print(f'            Cell {c_idx + 1}: Paragraphs = {len(cell.paragraphs)}')
+ #           for c_idx, cell in enumerate(row.cells):
+ #               print(f'            Cell {c_idx + 1}: Paragraphs = {len(cell.paragraphs)}')
 
-                for p_idx, paragraph in enumerate(cell.paragraphs):
-                    text = paragraph.text.strip()
+  #              for p_idx, paragraph in enumerate(cell.paragraphs):
+  #                  text = paragraph.text.strip()
   #                  print(f'                Paragraph {p_idx + 1}: "{text}"')
 
   #      print('-'*20, f'Table {t_idx} end', '-'*20) # spacing between tables
@@ -365,8 +493,8 @@ async def main():
     output_path = await translated_doc_creation(chosen_file,
                                                 selected_document,
                                                 target_lang="ES")
-#    if output_path:
-#        os.system(f"open {output_path}")
+    if output_path:
+        os.system(f"open {output_path}")
 
 if __name__=="__main__":
     asyncio.run(main())
