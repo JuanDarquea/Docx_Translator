@@ -13,10 +13,12 @@ from zipfile import BadZipFile # to handle invalid .docx files
 from docx import Document   # to read and write .docx files
 from docx.table import Table
 from docx.text.paragraph import Paragraph
+from datetime import datetime
 
 # unused imports
 import deepl # to translate text with contextual accuracy
 import time
+import traceback
 
 # load the .env file from the same directory as this script
 try:
@@ -30,6 +32,7 @@ load_dotenv(env_path) # load environment variables from .env file
 rate_limit_minute = 450  # translator plan rate limit: 450 requests per minute
 delay_between_requests = 60/rate_limit_minute  # calculate delay between requests in seconds
 max_retries = 5 # maximum number of retries for failed requests
+ERROR_LOG_DIR = "/home/juan-darquea/My_Projects/Projects/Docx_Translator_Files/Error_Logs"
 
 # create google transalator obeject
 translator = Translator()
@@ -74,12 +77,41 @@ def select_docx_file():
     # Return None instead of empty string for better logic
     return file_path if file_path else None
 
+def ensure_error_log_dir():
+    try:
+        os.makedirs(ERROR_LOG_DIR, exist_ok=True)
+    except Exception:
+        pass
+
+def log_error(context, error, file_path=None):
+    ensure_error_log_dir()
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_name = "error_log.txt"
+    log_path = os.path.join(ERROR_LOG_DIR, log_name)
+
+    details = [
+        f"[{timestamp}] {context}",
+        f"Error: {repr(error)}",
+    ]
+    if file_path:
+        details.append(f"File: {file_path}")
+    details.append("Traceback:")
+    details.append(traceback.format_exc())
+    details.append("-" * 60)
+
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write("\n".join(details) + "\n")
+    except Exception:
+        pass
+
 def file_validation(file_path):
     """Validate if a file path was selected"""
     if file_path is None: # when no file is selected
         return
     elif not file_path.lower().endswith(".docx"): # validate file extension
-        print("\nError!! The file selected must be a '.docx' file.")
+        print("\nError: The selected file must be a '.docx' file.")
+        print("Tip: Save or export your document as .docx and try again.")
         return
     else:
         try: # validate file existence
@@ -90,21 +122,35 @@ def file_validation(file_path):
                     f"\nFile size: {os.path.getsize(file_path)} KB", sep="")
             return True
         except FileExistsError: # file does not exist
-            print(f"\nError!! The file {file_path} selected does not exist.")
+            print(f"\nError: The file {file_path} does not exist.")
+            print("Tip: Verify the file path and try again.")
+            log_error("File not found", "FileExistsError", file_path)
             return
         except BadZipFile as e: # file is not a valid .docx file
-            print(f"\nError!! The file selected is not a valid .docx file: {e}")
+            print("\nError: The selected file is not a valid .docx document.")
+            print("Tip: Try re-saving the document in Word, then retry.")
+            log_error("Invalid docx file", e, file_path)
             return
         except PermissionError as e: # file access permission error
-            print(f"\nError!! Permission denied to access the file: {e}")
+            print("\nError: Permission denied to access the file.")
+            print("Tip: Close the document in Word and check file permissions.")
+            log_error("Permission error", e, file_path)
             return
         except Exception as e: # other errors
-            print(f"\nError validating the file: {e}")
+            print("\nError: Unexpected issue while validating the file.")
+            print("Tip: Try again or choose a different .docx file.")
+            log_error("File validation error", e, file_path)
         return
 
 def read_document(file_path):
     """Read the .docx file and return it as an object"""
-    selected_document = Document(file_path)
+    try:
+        selected_document = Document(file_path)
+    except Exception as e:
+        print("\nError: Unable to open the .docx file.")
+        print("Tip: Ensure the file is a valid .docx and not corrupted.")
+        log_error("Open document error", e, file_path)
+        return
     doc = [] # create empty list to store paragraphs
 
     # extract all text paragraphs from the document
@@ -116,7 +162,9 @@ def read_document(file_path):
         # print document content read success message
         print("\nDocument content read successfully.")
     except Exception as e: # handle errors while reading document
-        print(f"Error reading the document: {e}")
+        print("\nError: Failed while reading the document content.")
+        print("Tip: Try re-saving the document and retry.")
+        log_error("Read document error", e, file_path)
         return
 
     # print paragraph count
@@ -159,6 +207,67 @@ def iter_container_blocks(container):
         elif child.tag.endswith('}tbl'):
             yield "table", Table(child, container)
 
+def count_paragraphs_in_table(table):
+    count = 0
+    for row in table.rows:
+        for cell in row.cells:
+            count += len(cell.paragraphs)
+    return count
+
+def count_paragraphs_in_container(container):
+    count = len(container.paragraphs)
+    for table in container.tables:
+        count += count_paragraphs_in_table(table)
+    return count
+
+def count_paragraphs_in_document(document):
+    count = len(document.paragraphs)
+    for table in document.tables:
+        count += count_paragraphs_in_table(table)
+
+    visited = set()
+    for section in document.sections:
+        containers = (
+            section.header,
+            section.first_page_header,
+            section.even_page_header,
+            section.footer,
+            section.first_page_footer,
+            section.even_page_footer,
+        )
+        for container in containers:
+            key = id(container._element)
+            if key in visited:
+                continue
+            visited.add(key)
+            count += count_paragraphs_in_container(container)
+
+    return count
+
+class ProgressTracker:
+    def __init__(self, total):
+        self.total = max(total, 1)
+        self.completed = 0
+        self.start_ts = time.monotonic()
+
+    def tick(self):
+        self.completed += 1
+        elapsed = time.monotonic() - self.start_ts
+        rate = self.completed / elapsed if elapsed > 0 else 0
+        remaining = self.total - self.completed
+        eta = remaining / rate if rate > 0 else 0
+        eta_min = int(eta // 60)
+        eta_sec = int(eta % 60)
+        pct = (self.completed / self.total) * 100
+        print(
+            f"Processing... {self.completed}/{self.total} "
+            f"({pct:.1f}%) ETA {eta_min:02d}:{eta_sec:02d}",
+            end="\r",
+            flush=True,
+        )
+
+    def finish(self):
+        print()
 async def translate_text_preserving_whitespace(text, target_lang):
     """Translate text while preserving whitespace-only chunks unchanged."""
     if text is None or text == "":
@@ -319,7 +428,7 @@ def is_image_run(run):
             return True
     return False
 
-async def translate_paragraph_in_place(paragraph, target_lang):
+async def translate_paragraph_in_place(paragraph, target_lang, progress=None):
     """Translate one paragraph in place, preserving list/paragraph/run formatting."""
     if paragraph.runs:
         source_run_texts = [run.text for run in paragraph.runs]
@@ -346,20 +455,24 @@ async def translate_paragraph_in_place(paragraph, target_lang):
             run.text = await translate_text_preserving_whitespace(source_text, target_lang)
 
         fix_run_boundary_punctuation_from_texts(source_run_texts, paragraph.runs)
+        if progress:
+            progress.tick()
         return
 
     if paragraph.text and paragraph.text.strip():
         paragraph.text = await translate_text_preserving_whitespace(paragraph.text, target_lang)
+    if progress:
+        progress.tick()
 
-async def translate_table_in_place(table, target_lang):
+async def translate_table_in_place(table, target_lang, progress=None):
     """Translate text in each table cell paragraph in place."""
     print(f"Translating table: {len(table.rows)} row(s), {len(table.columns)} col(s)")
     for row in table.rows:
         for cell in row.cells:
             for paragraph in cell.paragraphs:
-                await translate_paragraph_in_place(paragraph, target_lang)
+                await translate_paragraph_in_place(paragraph, target_lang, progress)
 
-async def translate_header_footer_in_place(document, target_lang):
+async def translate_header_footer_in_place(document, target_lang, progress=None):
     """Translate all unique headers and footers in place, preserving page-number fields."""
     visited = set()
 
@@ -381,9 +494,9 @@ async def translate_header_footer_in_place(document, target_lang):
 
             for block_type, block in iter_container_blocks(container):
                 if block_type == "paragraph":
-                    await translate_paragraph_in_place(block, target_lang)
+                    await translate_paragraph_in_place(block, target_lang, progress)
                 elif block_type == "table":
-                    await translate_table_in_place(block, target_lang)
+                    await translate_table_in_place(block, target_lang, progress)
 
 async def translated_doc_creation(file_path, selected_document, target_lang="ES"):
     """
@@ -405,7 +518,9 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
         print()
         print(f"Chosen base name: {base_name}")
     except Exception as e:
-        print(f"Error reading the file: {e}")
+        print("\nError: Could not read the selected file name.")
+        print("Tip: Check the file name and try again.")
+        log_error("Read file name error", e, file_path)
         return
 
     try:
@@ -415,10 +530,14 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
 
         # check if output directory is defined
         if not output_dir:
-            print("Error!! No output directory defined in environment variables.")
+            print("\nError: No output directory defined.")
+            print("Tip: Set 'translated_docs_dir' or choose a file in a writable folder.")
+            log_error("Output directory missing", "No output directory", file_path)
             return
 
-        output_name = f"{name_no_ext}_{target_lang.upper()}{ext}"
+        safe_base = "".join(name_no_ext.split())
+        safe_base = re.sub(r'[\\/:\*\?"<>\|]', "", safe_base)
+        output_name = f"{safe_base}_{target_lang.upper()}{ext}"
 
         output_path = os.path.join(output_dir,
                                 output_name)
@@ -426,24 +545,33 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
         print(f"New file name: {output_name}")
         print(f"New file path: {output_path}\n")
     except Exception as e:
-        print(f"Error getting the output directory path: {e}")
+        print("\nError: Could not determine output directory.")
+        print("Tip: Check environment variables or file permissions.")
+        log_error("Output directory error", e, file_path)
         return
 
     try:
+        total_paragraphs = count_paragraphs_in_document(trans_file)
+        print(f"Processing... Total paragraphs: {total_paragraphs}")
+        progress = ProgressTracker(total_paragraphs)
+
         for block_type, block in iter_document_blocks(trans_file):
             if block_type == "paragraph":
-                await translate_paragraph_in_place(block, target_lang)
+                await translate_paragraph_in_place(block, target_lang, progress)
             elif block_type == "table":
-                await translate_table_in_place(block, target_lang)
+                await translate_table_in_place(block, target_lang, progress)
 
-        await translate_header_footer_in_place(trans_file, target_lang)
+        await translate_header_footer_in_place(trans_file, target_lang, progress)
+        progress.finish()
 
         trans_file.save(output_path)
         print(f"Translated document saved successfully at: {output_path}")
         return output_path
 
     except Exception as e:
-            print(f"Error reading translated document: {e}")
+            print("\nError: Translation failed while writing the output file.")
+            print("Tip: Check disk space and file permissions, then try again.")
+            log_error("Translation/output error", e, file_path)
             return
 
 def inspect_tables(selected_document):
