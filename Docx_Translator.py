@@ -1,6 +1,7 @@
 # docx_Translator
 import os
 import re
+import unicodedata
 
 from googletrans import Translator # to translate text
 import asyncio
@@ -41,6 +42,12 @@ NON_TRANSLATABLE_PATTERNS = [
     re.compile(r"\b\d+(?:[.,]\d+)?%"),  # percentages
     re.compile(r"\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\b"),  # numbers
 ]
+
+PROPER_NOUN_SEQUENCE_RE = re.compile(
+    r"\b(?:[A-Z][a-z]+(?:['-][A-Z][a-z]+)?)(?:\s+(?:[A-Z][a-z]+(?:['-][A-Z][a-z]+)?))*\b"
+)
+ALL_CAPS_RE = re.compile(r"\b[A-Z]{2,}\b")
+PLACEHOLDER_RE = re.compile(r"__NTX_\d+__")
 
 # define a variable to select the file to be translated
 def select_docx_file():
@@ -173,6 +180,7 @@ async def translate_text_preserving_whitespace(text, target_lang):
     result = await translator.translate(protected_text, dest=target_lang)
     await asyncio.sleep(delay_between_requests)
     translated_core = restore_non_translatables(result.text, replacements)
+    translated_core = normalize_unicode(translated_core)
     return f"{leading_ws}{translated_core}{trailing_ws}"
 
 def protect_non_translatables(text):
@@ -194,6 +202,42 @@ def protect_non_translatables(text):
 
         protected = pattern.sub(_replace, protected)
 
+    # Protect ALL CAPS acronyms anywhere.
+    def _replace_caps(match):
+        nonlocal token_index
+        token = f"__NTX_{token_index}__"
+        token_index += 1
+        replacements[token] = match.group(0)
+        return token
+
+    protected = ALL_CAPS_RE.sub(_replace_caps, protected)
+
+    # Protect proper nouns (capitalized words), with sentence-start exception.
+    # Multi-word capitalized sequences are always protected (e.g., "John Smith").
+    for match in list(PROPER_NOUN_SEQUENCE_RE.finditer(protected)):
+        span_text = match.group(0)
+        if PLACEHOLDER_RE.search(span_text):
+            continue
+
+        words = span_text.split()
+        is_multi_word = len(words) > 1
+
+        if not is_multi_word:
+            # Check if this single capitalized word is at sentence start.
+            idx = match.start()
+            j = idx - 1
+            while j >= 0 and protected[j].isspace():
+                j -= 1
+            if j < 0:
+                continue
+            if protected[j] in ".!?":
+                continue
+
+        token = f"__NTX_{token_index}__"
+        token_index += 1
+        replacements[token] = span_text
+        protected = protected[:match.start()] + token + protected[match.end():]
+
     return protected, replacements
 
 def restore_non_translatables(text, replacements):
@@ -202,6 +246,10 @@ def restore_non_translatables(text, replacements):
     for token, original in replacements.items():
         restored = restored.replace(token, original)
     return restored
+
+def normalize_unicode(text):
+    """Normalize text to NFC to keep composed Spanish characters (ñ, á, é, í, ó, ú)."""
+    return unicodedata.normalize("NFC", text)
 
 def fix_run_boundary_punctuation_from_texts(source_texts, target_runs):
     """
@@ -264,6 +312,13 @@ def has_field_code_nodes(run):
             return True
     return False
 
+def is_image_run(run):
+    """Detect runs that contain drawings/pictures to avoid altering image anchors."""
+    for node in run._r.iter():
+        if node.tag.endswith('}drawing') or node.tag.endswith('}pict'):
+            return True
+    return False
+
 async def translate_paragraph_in_place(paragraph, target_lang):
     """Translate one paragraph in place, preserving list/paragraph/run formatting."""
     if paragraph.runs:
@@ -271,6 +326,8 @@ async def translate_paragraph_in_place(paragraph, target_lang):
         in_field = False
 
         for idx, run in enumerate(paragraph.runs):
+            if is_image_run(run):
+                continue
             # Never rewrite field-code runs; it can break PAGE/NUMPAGES rendering.
             if has_field_code_nodes(run):
                 for node in run._r.iter():
