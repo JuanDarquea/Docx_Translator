@@ -19,6 +19,7 @@ from datetime import datetime
 import deepl # to translate text with contextual accuracy
 import time
 import traceback
+import webbrowser
 
 # load the .env file from the same directory as this script
 try:
@@ -244,6 +245,56 @@ def count_paragraphs_in_document(document):
 
     return count
 
+def count_tables_in_document(document):
+    count = len(document.tables)
+    visited = set()
+    for section in document.sections:
+        containers = (
+            section.header,
+            section.first_page_header,
+            section.even_page_header,
+            section.footer,
+            section.first_page_footer,
+            section.even_page_footer,
+        )
+        for container in containers:
+            key = id(container._element)
+            if key in visited:
+                continue
+            visited.add(key)
+            count += len(container.tables)
+    return count
+
+def count_images_in_document(document):
+    count = 0
+    for node in document.element.body.iter():
+        if node.tag.endswith('}drawing') or node.tag.endswith('}pict'):
+            count += 1
+    return count
+
+def format_duration(seconds):
+    seconds = int(seconds)
+    minutes = seconds // 60
+    seconds = seconds % 60
+    return f"{minutes:02d}:{seconds:02d}"
+
+def confirm_success(output_path, stats):
+    print("\nTranslation completed successfully.")
+    print(f"Output file: {output_path}")
+    print("Summary:")
+    print(f"- Paragraphs translated: {stats['paragraphs']}")
+    print(f"- Tables processed: {stats['tables']}")
+    print(f"- Images preserved: {stats['images']}")
+    print(f"- Headers/Footers processed: {stats['headers_footers']}")
+    print(f"- Total time: {stats['elapsed']}")
+
+    try:
+        answer = input("Open translated file now? (y/n): ").strip().lower()
+        if answer == "y":
+            webbrowser.open(output_path)
+    except Exception:
+        pass
+
 class ProgressTracker:
     def __init__(self, total):
         self.total = max(total, 1)
@@ -268,6 +319,9 @@ class ProgressTracker:
 
     def finish(self):
         print()
+
+    def elapsed(self):
+        return time.monotonic() - self.start_ts
 async def translate_text_preserving_whitespace(text, target_lang):
     """Translate text while preserving whitespace-only chunks unchanged."""
     if text is None or text == "":
@@ -552,6 +606,9 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
 
     try:
         total_paragraphs = count_paragraphs_in_document(trans_file)
+        total_tables = count_tables_in_document(trans_file)
+        total_images = count_images_in_document(trans_file)
+        headers_footers = len(trans_file.sections) * 2
         print(f"Processing... Total paragraphs: {total_paragraphs}")
         progress = ProgressTracker(total_paragraphs)
 
@@ -565,7 +622,14 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
         progress.finish()
 
         trans_file.save(output_path)
-        print(f"Translated document saved successfully at: {output_path}")
+        stats = {
+            "paragraphs": total_paragraphs,
+            "tables": total_tables,
+            "images": total_images,
+            "headers_footers": headers_footers,
+            "elapsed": format_duration(progress.elapsed()),
+        }
+        confirm_success(output_path, stats)
         return output_path
 
     except Exception as e:
