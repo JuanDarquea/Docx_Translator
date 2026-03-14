@@ -35,7 +35,7 @@ delay_between_requests = 60/rate_limit_minute  # calculate delay between request
 max_retries = 5 # maximum number of retries for failed requests
 ERROR_LOG_DIR = "/home/juan-darquea/My_Projects/Projects/Docx_Translator_Files/Error_Logs"
 
-# create google transalator obeject
+# create google translator object
 translator = Translator()
 
 NON_TRANSLATABLE_PATTERNS = [
@@ -52,6 +52,19 @@ PROPER_NOUN_SEQUENCE_RE = re.compile(
 )
 ALL_CAPS_RE = re.compile(r"\b[A-Z]{2,}\b")
 PLACEHOLDER_RE = re.compile(r"__NTX_\d+__")
+
+COMMON_ENGLISH_WORDS = {
+    "the","and","of","to","in","for","with","on","at","from","by","is","are","was",
+    "were","be","this","that","it","as","an","a","or","but","not","we","you","they",
+    "he","she","them","his","her","their","our","us"
+}
+
+KNOWN_TRANSLATIONS = {
+    "hello": "hola",
+    "good morning": "buenos días",
+    "good afternoon": "buenas tardes",
+    "good night": "buenas noches",
+}
 
 # define a variable to select the file to be translated
 def select_docx_file():
@@ -245,6 +258,46 @@ def count_paragraphs_in_document(document):
 
     return count
 
+def iter_paragraphs_in_table(table):
+    for row in table.rows:
+        for cell in row.cells:
+            for paragraph in cell.paragraphs:
+                yield paragraph
+
+def iter_paragraphs_in_container(container):
+    for paragraph in container.paragraphs:
+        yield paragraph
+    for table in container.tables:
+        for paragraph in iter_paragraphs_in_table(table):
+            yield paragraph
+
+def collect_all_paragraphs(document):
+    paragraphs = []
+    for paragraph in document.paragraphs:
+        paragraphs.append(paragraph)
+    for table in document.tables:
+        paragraphs.extend(list(iter_paragraphs_in_table(table)))
+
+    visited = set()
+    for section in document.sections:
+        containers = (
+            section.header,
+            section.first_page_header,
+            section.even_page_header,
+            section.footer,
+            section.first_page_footer,
+            section.even_page_footer,
+        )
+        for container in containers:
+            key = id(container._element)
+            if key in visited:
+                continue
+            visited.add(key)
+            for paragraph in iter_paragraphs_in_container(container):
+                paragraphs.append(paragraph)
+
+    return paragraphs
+
 def count_tables_in_document(document):
     count = len(document.tables)
     visited = set()
@@ -289,11 +342,87 @@ def confirm_success(output_path, stats):
     print(f"- Total time: {stats['elapsed']}")
 
     try:
-        answer = input("Open translated file now? (y/n): ").strip().lower()
+        answer = input("\nOpen translated file now? (y/n): ").strip().lower()
         if answer == "y":
             webbrowser.open(output_path)
     except Exception:
         pass
+
+def run_validation_checks(original_file_path, output_path, original_paragraphs, original_text_flags):
+    warnings = []
+
+    # Check paragraph counts
+    current_paragraphs = collect_all_paragraphs(Document(output_path))
+    if len(current_paragraphs) != len(original_paragraphs):
+        warnings.append(
+            f"Paragraph count changed (original {len(original_paragraphs)} vs output {len(current_paragraphs)})."
+        )
+
+    # Check for empty translated paragraphs where source had text
+    for idx, (para, had_text) in enumerate(zip(current_paragraphs, original_text_flags), start=1):
+        if had_text and not para.text.strip():
+            warnings.append(f"Paragraph #{idx} became empty after translation.")
+
+    # Compare file sizes
+    try:
+        src_size = os.path.getsize(original_file_path)
+        out_size = os.path.getsize(output_path)
+        if src_size > 0:
+            diff_ratio = abs(out_size - src_size) / src_size
+            if diff_ratio > 0.35:
+                warnings.append(
+                    f"File size difference is large ({src_size} bytes vs {out_size} bytes)."
+                )
+    except Exception as e:
+        log_error("File size comparison error", e, original_file_path)
+
+    if warnings:
+        print("\nValidation warnings:")
+        for w in warnings:
+            print(f"- {w}")
+        log_error("Validation warnings", "\n".join(warnings), original_file_path)
+    else:
+        print("\nValidation checks passed.")
+
+def run_quality_checks(original_texts, output_paragraphs):
+    warnings = []
+
+    for idx, (src_text, out_para) in enumerate(zip(original_texts, output_paragraphs), start=1):
+        src = (src_text or "").strip()
+        out = (out_para.text or "").strip()
+
+        if not src:
+            continue
+
+        # Flag suspicious length ratios.
+        if len(src) > 0:
+            ratio = len(out) / max(len(src), 1)
+            if ratio < 0.5 or ratio > 2.0:
+                warnings.append(
+                    f"Paragraph #{idx} length ratio suspicious (src {len(src)} vs out {len(out)})."
+                )
+
+        # Flag common English words that remain.
+        out_words = re.findall(r"[A-Za-z']+", out.lower())
+        if any(w in COMMON_ENGLISH_WORDS for w in out_words):
+            warnings.append(f"Paragraph #{idx} contains common English words.")
+
+        # Known translation checks (simple substring match).
+        src_l = src.lower()
+        out_l = out.lower()
+        for k, v in KNOWN_TRANSLATIONS.items():
+            if k in src_l and v not in out_l:
+                warnings.append(
+                    f"Paragraph #{idx} may have missed known translation for '{k}'."
+                )
+
+    if warnings:
+        print("\nQuality warnings:")
+        for w in warnings:
+            print(f"- {w}")
+        log_error("Quality warnings", "\n".join(warnings))
+    else:
+        print("\nQuality checks passed.")
 
 class ProgressTracker:
     def __init__(self, total):
@@ -612,6 +741,10 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
         print(f"Processing... Total paragraphs: {total_paragraphs}")
         progress = ProgressTracker(total_paragraphs)
 
+        original_paragraphs = collect_all_paragraphs(trans_file)
+        original_text_flags = [bool(p.text.strip()) for p in original_paragraphs]
+        original_texts = [p.text for p in original_paragraphs]
+
         for block_type, block in iter_document_blocks(trans_file):
             if block_type == "paragraph":
                 await translate_paragraph_in_place(block, target_lang, progress)
@@ -629,6 +762,12 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
             "headers_footers": headers_footers,
             "elapsed": format_duration(progress.elapsed()),
         }
+        run_validation_checks(file_path, output_path, original_paragraphs, original_text_flags)
+        try:
+            output_paragraphs = collect_all_paragraphs(Document(output_path))
+            run_quality_checks(original_texts, output_paragraphs)
+        except Exception as e:
+            log_error("Quality check error", e, file_path)
         confirm_success(output_path, stats)
         return output_path
 
@@ -671,7 +810,7 @@ def debug_print_runs(selected_document):
     - prints all runs in each paragraph with their formatting details
     """
     print()
-    print("-"*20, "Run Debbug Start", "-"*20)
+    print("-"*20, "Run Debug Start", "-"*20)
 
     for p_idx, paragraph in enumerate(selected_document.paragraphs, start=1):
         print(f"Paragraph {p_idx}:")
@@ -686,7 +825,7 @@ def debug_print_runs(selected_document):
                   )
 
         print("-"*50)
-    print("-"*20, "Run Debbug End", "-"*20)
+    print("-"*20, "Run Debug End", "-"*20)
 
 # the following instance is for debugging and learning purposes only
 def debug_paragraph_runs(run_info):
@@ -742,8 +881,8 @@ async def main():
     output_path = await translated_doc_creation(chosen_file,
                                                 selected_document,
                                                 target_lang="ES")
-    if output_path:
-        os.system(f"open {output_path}")
+    #if output_path:
+    #    os.system(f"open {output_path}")
 
 if __name__=="__main__":
     asyncio.run(main())
