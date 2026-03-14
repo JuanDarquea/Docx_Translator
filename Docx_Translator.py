@@ -2,6 +2,7 @@
 import os
 import re
 import unicodedata
+import json
 
 from googletrans import Translator # to translate text
 import asyncio
@@ -59,12 +60,67 @@ COMMON_ENGLISH_WORDS = {
     "he","she","them","his","her","their","our","us"
 }
 
-KNOWN_TRANSLATIONS = {
-    "hello": "hola",
-    "good morning": "buenos días",
-    "good afternoon": "buenas tardes",
-    "good night": "buenas noches",
-}
+def load_known_translations():
+    try:
+        rules_path = Path(__file__).parent / "quality_rules.json"
+    except NameError:
+        rules_path = Path.cwd() / "quality_rules.json"
+
+    try:
+        with open(rules_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        translations = data.get("known_translations", {})
+        if isinstance(translations, dict):
+            return translations
+    except Exception:
+        pass
+
+    return {
+        "hello": "hola",
+        "good morning": "buenos días",
+        "good afternoon": "buenas tardes",
+        "good night": "buenas noches"
+    }
+
+KNOWN_TRANSLATIONS = load_known_translations()
+
+def load_protected_words():
+    try:
+        words_path = Path(__file__).parent / "protected_words.json"
+    except NameError:
+        words_path = Path.cwd() / "protected_words.json"
+
+    try:
+        with open(words_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        words = data.get("protected_words", [])
+        if isinstance(words, list):
+            return [str(w) for w in words if str(w).strip()]
+    except Exception:
+        pass
+
+    return [
+        "Ana",
+        "Maria",
+        "María",
+        "Jose",
+        "José",
+        "Juan",
+        "Luis",
+        "Marta",
+        "Carlos",
+        "Pedro",
+        "Lucia",
+        "Lucía",
+        "Sofia",
+        "Sofía",
+        "Andrea",
+        "Diego",
+        "Miguel",
+        "Pablo",
+    ]
+
+PROTECTED_WORDS = load_protected_words()
 
 # define a variable to select the file to be translated
 def select_docx_file():
@@ -503,6 +559,28 @@ def protect_non_translatables(text):
         return token
 
     protected = ALL_CAPS_RE.sub(_replace_caps, protected)
+
+    # Protect explicit words from list (e.g., names that get mistranslated).
+    if PROTECTED_WORDS:
+        # Longer phrases first to avoid partial matches.
+        for phrase in sorted(PROTECTED_WORDS, key=len, reverse=True):
+            if not phrase.strip():
+                continue
+            # Allow flexible whitespace inside multi-word phrases.
+            parts = [re.escape(p) for p in phrase.split()]
+            pattern = r"\b" + r"\s+".join(parts) + r"\b"
+            protected_words_re = re.compile(pattern, re.IGNORECASE)
+
+            def _replace_protected(match):
+                nonlocal token_index
+                if PLACEHOLDER_RE.search(match.group(0)):
+                    return match.group(0)
+                token = f"__NTX_{token_index}__"
+                token_index += 1
+                replacements[token] = match.group(0)
+                return token
+
+            protected = protected_words_re.sub(_replace_protected, protected)
 
     # Protect proper nouns (capitalized words), with sentence-start exception.
     # Multi-word capitalized sequences are always protected (e.g., "John Smith").
