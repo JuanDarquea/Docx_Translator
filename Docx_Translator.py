@@ -62,9 +62,9 @@ COMMON_ENGLISH_WORDS = {
 
 def load_known_translations():
     try:
-        rules_path = Path(__file__).parent / "quality_rules.json"
+        rules_path = Path(__file__).parent / "Files/quality_rules.json"
     except NameError:
-        rules_path = Path.cwd() / "quality_rules.json"
+        rules_path = Path.cwd() / "Files/quality_rules.json"
 
     try:
         with open(rules_path, "r", encoding="utf-8") as f:
@@ -86,9 +86,9 @@ KNOWN_TRANSLATIONS = load_known_translations()
 
 def load_protected_words():
     try:
-        words_path = Path(__file__).parent / "protected_words.json"
+        words_path = Path(__file__).parent / "Files/protected_words.json"
     except NameError:
-        words_path = Path.cwd() / "protected_words.json"
+        words_path = Path.cwd() / "Files/protected_words.json"
 
     try:
         with open(words_path, "r", encoding="utf-8") as f:
@@ -146,6 +146,13 @@ def select_docx_file():
 
     # Return None instead of empty string for better logic
     return file_path if file_path else None
+
+def prompt_add_another_file():
+    try:
+        answer = input("Add another file? (y/n): ").strip().lower()
+        return answer == "y"
+    except Exception:
+        return False
 
 def ensure_error_log_dir():
     try:
@@ -387,7 +394,7 @@ def format_duration(seconds):
     seconds = seconds % 60
     return f"{minutes:02d}:{seconds:02d}"
 
-def confirm_success(output_path, stats):
+def confirm_success(output_path, stats, open_mode="file", output_dir=None):
     print("\nTranslation completed successfully.")
     print(f"Output file: {output_path}")
     print("Summary:")
@@ -398,9 +405,16 @@ def confirm_success(output_path, stats):
     print(f"- Total time: {stats['elapsed']}")
 
     try:
-        answer = input("\nOpen translated file now? (y/n): ").strip().lower()
-        if answer == "y":
-            webbrowser.open(output_path)
+        if open_mode == "file":
+            answer = input("\nOpen translated file now? (y/n): ").strip().lower()
+            if answer == "y":
+                print(f"Opening file: {output_path}")
+                webbrowser.open(output_path)
+        elif open_mode == "folder" and output_dir:
+            answer = input("\nOpen translated files folder now? (y/n): ").strip().lower()
+            if answer == "y":
+                print(f"Opening folder: {output_dir}")
+                webbrowser.open(output_dir)
     except Exception:
         pass
 
@@ -507,6 +521,31 @@ class ProgressTracker:
 
     def elapsed(self):
         return time.monotonic() - self.start_ts
+
+class BatchProgressTracker:
+    def __init__(self, total_files):
+        self.total = max(total_files, 1)
+        self.completed = 0
+        self.start_ts = time.monotonic()
+
+    def tick(self):
+        self.completed += 1
+        elapsed = time.monotonic() - self.start_ts
+        rate = self.completed / elapsed if elapsed > 0 else 0
+        remaining = self.total - self.completed
+        eta = remaining / rate if rate > 0 else 0
+        eta_min = int(eta // 60)
+        eta_sec = int(eta % 60)
+        pct = (self.completed / self.total) * 100
+        print(
+            f"Batch progress: {self.completed}/{self.total} "
+            f"({pct:.1f}%) ETA {eta_min:02d}:{eta_sec:02d}",
+            end="\r",
+            flush=True,
+        )
+
+    def finish(self):
+        print()
 async def translate_text_preserving_whitespace(text, target_lang):
     """Translate text while preserving whitespace-only chunks unchanged."""
     if text is None or text == "":
@@ -759,7 +798,7 @@ async def translate_header_footer_in_place(document, target_lang, progress=None)
                 elif block_type == "table":
                     await translate_table_in_place(block, target_lang, progress)
 
-async def translated_doc_creation(file_path, selected_document, target_lang="ES"):
+async def translated_doc_creation(file_path, selected_document, target_lang="ES", open_mode="file"):
     """
     Function to create an output file and write translated text into the new file.
     Returns:
@@ -846,8 +885,8 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
             run_quality_checks(original_texts, output_paragraphs)
         except Exception as e:
             log_error("Quality check error", e, file_path)
-        confirm_success(output_path, stats)
-        return output_path
+        confirm_success(output_path, stats, open_mode=open_mode, output_dir=output_dir)
+        return output_path, output_dir
 
     except Exception as e:
             print("\nError: Translation failed while writing the output file.")
@@ -934,31 +973,88 @@ def debug_paragraph_runs(run_info):
     print("-"*20, "All Paragraphs Run Info End", "-"*20)
 
 async def main():
-    print("Select a .docx file to translate...")
+    print("Select .docx files to translate...")
 
-    # get file selected from user
-    chosen_file = select_docx_file()
+    selected_files = []
 
-    # close if cancelled and no file selected
-    if not chosen_file:
-        print("\nUser closed the window before selecting a file.",
-              "\nGoodbye!")
-        return
+    while True:
+        chosen_file = select_docx_file()
+        if not chosen_file:
+            if not selected_files:
+                print("\nUser closed the window before selecting a file.",
+                      "\nGoodbye!")
+                return
+            break
 
-    # validate file
-    if file_validation(chosen_file) is None:
-        return
+        selected_files.append(chosen_file)
+        if not prompt_add_another_file():
+            break
 
-    # read document
-    selected_document = read_document(chosen_file)
+    total_files = len(selected_files)
+    print(f"\nBatch start: {total_files} file(s) queued.")
 
-    # inspect for tables
-    inspect_tables(selected_document)
+    successes = 0
+    failures = 0
+    batch_errors = []
+    batch_progress = BatchProgressTracker(total_files)
+    batch_output_dir = None
 
-    # translate document and create output preserving structure and formatting
-    output_path = await translated_doc_creation(chosen_file,
-                                                selected_document,
-                                                target_lang="ES")
+    for idx, file_path in enumerate(selected_files, start=1):
+        print(f"\nProcessing file {idx}/{total_files}: {file_path}")
+
+        # validate file
+        if file_validation(file_path) is None:
+            failures += 1
+            batch_errors.append((file_path, "Validation failed"))
+            continue
+
+        # read document
+        selected_document = read_document(file_path)
+        if not selected_document:
+            failures += 1
+            batch_errors.append((file_path, "Read failed"))
+            continue
+
+        # inspect for tables
+        inspect_tables(selected_document)
+
+        try:
+            open_mode = "file" if total_files == 1 else "none"
+            output_path, output_dir = await translated_doc_creation(file_path,
+                                                                    selected_document,
+                                                                    target_lang="ES",
+                                                                    open_mode=open_mode)
+            if output_path:
+                successes += 1
+                if total_files > 1 and output_dir:
+                    batch_output_dir = output_dir
+            else:
+                failures += 1
+                batch_errors.append((file_path, "Translation failed"))
+        except Exception as e:
+            failures += 1
+            batch_errors.append((file_path, f"Exception: {e}"))
+            log_error("Batch translation error", e, file_path)
+            continue
+        finally:
+            batch_progress.tick()
+
+    batch_progress.finish()
+    print("\nBatch completed.")
+    print(f"- Successes: {successes}")
+    print(f"- Failures: {failures}")
+    if batch_errors:
+        print("Failed files:")
+        for fp, reason in batch_errors:
+            print(f"- {fp} | {reason}")
+    if total_files > 1 and successes > 0 and batch_output_dir:
+        try:
+            answer = input("\nOpen translated files folder now? (y/n): ").strip().lower()
+            if answer == "y":
+                print(f"Opening folder: {batch_output_dir}")
+                webbrowser.open(batch_output_dir)
+        except Exception:
+            pass
     #if output_path:
     #    os.system(f"open {output_path}")
 
