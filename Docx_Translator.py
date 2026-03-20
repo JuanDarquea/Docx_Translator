@@ -4,12 +4,17 @@ import re
 import unicodedata
 import json
 import sys
+import threading
+import queue
 
 from googletrans import Translator # to translate text
 import asyncio
 from pathlib import Path
+import tkinter as tk
 from tkinter import Tk
 from tkinter import filedialog as fd
+from tkinter import messagebox
+from tkinter import ttk
 from dotenv import load_dotenv # to load environment variables from .env file
 from zipfile import BadZipFile # to handle invalid .docx files
 from docx import Document   # to read and write .docx files
@@ -158,7 +163,8 @@ def load_settings():
         "api_key": "",
         "source_lang": "EN",
         "target_lang": "ES",
-        "open_settings_on_start": True
+        "open_settings_on_start": True,
+        "use_gui": True
     }
 
     if not settings_path.exists():
@@ -191,6 +197,17 @@ def prompt_edit_settings(settings_path):
                 os.system(f'open "{settings_path}"')
             else:
                 os.system(f'xdg-open "{settings_path}"')
+    except Exception:
+        pass
+
+def open_settings_file(settings_path):
+    try:
+        if sys.platform.startswith("win"):
+            os.system(f'start "" "{settings_path}"')
+        elif sys.platform == "darwin":
+            os.system(f'open "{settings_path}"')
+        else:
+            os.system(f'xdg-open "{settings_path}"')
     except Exception:
         pass
 
@@ -943,13 +960,13 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
         except Exception as e:
             log_error("Quality check error", e, file_path)
         confirm_success(output_path, stats, open_mode=open_mode, output_dir=output_dir)
-        return output_path, output_dir
+        return output_path, output_dir, stats
 
     except Exception as e:
             print("\nError: Translation failed while writing the output file.")
             print("Tip: Check disk space and file permissions, then try again.")
             log_error("Translation/output error", e, file_path)
-            return
+            return None, None, None
 
 def inspect_tables(selected_document):
     """"""
@@ -1082,10 +1099,10 @@ async def main():
         try:
             open_mode = "file" if total_files == 1 else "none"
             target_lang = validate_language_code(settings.get("target_lang", "ES"), "ES")
-            output_path, output_dir = await translated_doc_creation(file_path,
-                                                                    selected_document,
-                                                                    target_lang=target_lang,
-                                                                    open_mode=open_mode)
+            output_path, output_dir, _stats = await translated_doc_creation(file_path,
+                                                                            selected_document,
+                                                                            target_lang=target_lang,
+                                                                            open_mode=open_mode)
             if output_path:
                 successes += 1
                 if total_files > 1 and output_dir:
@@ -1120,5 +1137,214 @@ async def main():
     #if output_path:
     #    os.system(f"open {output_path}")
 
+def gui_main():
+    settings, settings_path = load_settings()
+
+    root = Tk()
+    root.title("Docx Translator")
+    root.geometry("720x520")
+
+    selected_files = []
+    stop_flag = {"stop": False}
+    ui_queue = queue.Queue()
+
+    def add_files():
+        files = fd.askopenfilenames(
+            title="Choose .docx files",
+            filetypes=[("Word Documents", "*.docx"), ("All Files", "*.*")]
+        )
+        if not files:
+            return
+        for f in files:
+            if f not in selected_files:
+                selected_files.append(f)
+                listbox.insert("end", f)
+
+    def clear_files():
+        selected_files.clear()
+        listbox.delete(0, "end")
+
+    def on_open_settings():
+        open_settings_file(settings_path)
+
+    def set_status(msg):
+        status_var.set(msg)
+
+    def worker():
+        if not selected_files:
+            ui_queue.put(("status", "No files selected."))
+            return
+
+        stop_flag["stop"] = False
+        successes = 0
+        failures = 0
+        batch_errors = []
+        batch_output_dir = None
+        total_files = len(selected_files)
+
+        ui_queue.put(("batch_total", total_files))
+        ui_queue.put(("status", f"Batch start: {total_files} file(s)."))
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        for idx, file_path in enumerate(selected_files, start=1):
+            if stop_flag["stop"]:
+                ui_queue.put(("status", "Batch stopped by user."))
+                break
+
+            ui_queue.put(("status", f"Processing file {idx}/{total_files}: {file_path}"))
+
+            if file_validation(file_path) is None:
+                failures += 1
+                batch_errors.append((file_path, "Validation failed"))
+                ui_queue.put(("batch_tick", None))
+                continue
+
+            selected_document = read_document(file_path)
+            if not selected_document:
+                failures += 1
+                batch_errors.append((file_path, "Read failed"))
+                ui_queue.put(("batch_tick", None))
+                continue
+
+            inspect_tables(selected_document)
+
+            try:
+                target_lang = validate_language_code(settings.get("target_lang", "ES"), "ES")
+                output_path, output_dir, stats = loop.run_until_complete(
+                    translated_doc_creation(
+                        file_path,
+                        selected_document,
+                        target_lang=target_lang,
+                        open_mode="none"
+                    )
+                )
+                if output_path:
+                    successes += 1
+                    batch_output_dir = output_dir
+                    ui_queue.put(("summary", (file_path, output_path, stats)))
+                else:
+                    failures += 1
+                    batch_errors.append((file_path, "Translation failed"))
+            except Exception as e:
+                failures += 1
+                batch_errors.append((file_path, f"Exception: {e}"))
+                log_error("GUI batch translation error", e, file_path)
+            finally:
+                ui_queue.put(("batch_tick", None))
+
+        loop.close()
+        ui_queue.put(("batch_done", (successes, failures, batch_errors, batch_output_dir)))
+
+    def start_batch():
+        if not selected_files:
+            messagebox.showwarning("No files", "Please add at least one .docx file.")
+            return
+        start_btn.config(state="disabled")
+        stop_btn.config(state="normal")
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+
+    def stop_batch():
+        stop_flag["stop"] = True
+        stop_btn.config(state="disabled")
+
+    def process_queue():
+        try:
+            while True:
+                item = ui_queue.get_nowait()
+                kind = item[0]
+                payload = item[1] if len(item) > 1 else None
+
+                if kind == "status":
+                    set_status(payload)
+                elif kind == "batch_total":
+                    progress_bar["maximum"] = payload
+                    progress_bar["value"] = 0
+                elif kind == "batch_tick":
+                    progress_bar["value"] = progress_bar["value"] + 1
+                elif kind == "summary":
+                    if payload is None:
+                        continue
+                    file_path, output_path, stats = payload
+                    summary_text.insert("end", f"\n{file_path}\n")
+                    summary_text.insert("end", f"Output: {output_path}\n")
+                    summary_text.insert(
+                        "end",
+                        f"Paragraphs: {stats['paragraphs']} | Tables: {stats['tables']} | "
+                        f"Images: {stats['images']} | Headers/Footers: {stats['headers_footers']} | "
+                        f"Time: {stats['elapsed']}\n"
+                    )
+                    summary_text.see("end")
+                elif kind == "batch_done":
+                    if payload is None:
+                        continue
+                    successes, failures, batch_errors, output_dir = payload
+                    set_status("Batch completed.")
+                    start_btn.config(state="normal")
+                    stop_btn.config(state="disabled")
+
+                    if batch_errors:
+                        msg = "\n".join([f"{fp} | {reason}" for fp, reason in batch_errors])
+                        messagebox.showwarning("Batch completed with errors", msg)
+                    else:
+                        messagebox.showinfo("Batch completed", "All files translated successfully.")
+
+                    if output_dir:
+                        if messagebox.askyesno("Open Folder", "Open translated files folder?"):
+                            webbrowser.open(output_dir)
+                ui_queue.task_done()
+        except queue.Empty:
+            pass
+        root.after(200, process_queue)
+
+    header = ttk.Label(root, text="Docx Translator", font=("Segoe UI", 16))
+    header.pack(pady=10)
+
+    btn_frame = ttk.Frame(root)
+    btn_frame.pack(fill="x", padx=10)
+
+    add_btn = ttk.Button(btn_frame, text="Add Files", command=add_files)
+    add_btn.pack(side="left", padx=5)
+
+    clear_btn = ttk.Button(btn_frame, text="Clear List", command=clear_files)
+    clear_btn.pack(side="left", padx=5)
+
+    settings_btn = ttk.Button(btn_frame, text="Settings", command=on_open_settings)
+    settings_btn.pack(side="right", padx=5)
+
+    listbox = tk.Listbox(root, height=8)
+    listbox.pack(fill="both", expand=False, padx=10, pady=10)
+
+    progress_bar = ttk.Progressbar(root, mode="determinate")
+    progress_bar.pack(fill="x", padx=10)
+
+    status_var = tk.StringVar(value="Ready.")
+    status_label = ttk.Label(root, textvariable=status_var)
+    status_label.pack(fill="x", padx=10, pady=5)
+
+    control_frame = ttk.Frame(root)
+    control_frame.pack(fill="x", padx=10, pady=5)
+
+    start_btn = ttk.Button(control_frame, text="Start", command=start_batch)
+    start_btn.pack(side="left", padx=5)
+
+    stop_btn = ttk.Button(control_frame, text="Stop", command=stop_batch, state="disabled")
+    stop_btn.pack(side="left", padx=5)
+
+    summary_label = ttk.Label(root, text="Summary")
+    summary_label.pack(anchor="w", padx=10)
+
+    summary_text = tk.Text(root, height=8, wrap="word")
+    summary_text.pack(fill="both", expand=True, padx=10, pady=5)
+
+    process_queue()
+    root.mainloop()
+
 if __name__=="__main__":
-    asyncio.run(main())
+    settings, _settings_path = load_settings()
+    if settings.get("use_gui"):
+        gui_main()
+    else:
+        asyncio.run(main())
