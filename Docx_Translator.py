@@ -1280,6 +1280,7 @@ def gui_main():
                 break
 
             ui_queue.put(("status", f"Processing file {idx}/{total_files}: {file_path}"))
+            ui_queue.put(("file_start", (idx, total_files, file_path)))
 
             if file_validation(file_path) is None:
                 failures += 1
@@ -1310,13 +1311,16 @@ def gui_main():
                     successes += 1
                     batch_output_dir = output_dir
                     ui_queue.put(("summary", (file_path, output_path, stats, quality_warnings)))
+                    ui_queue.put(("file_done", (idx, total_files)))
                 else:
                     failures += 1
                     batch_errors.append((file_path, "Translation failed"))
+                    ui_queue.put(("file_done", (idx, total_files)))
             except Exception as e:
                 failures += 1
                 batch_errors.append((file_path, f"Exception: {e}"))
                 log_error("GUI batch translation error", e, file_path)
+                ui_queue.put(("file_done", (idx, total_files)))
             finally:
                 ui_queue.put(("batch_tick", None))
 
@@ -1349,8 +1353,21 @@ def gui_main():
                 elif kind == "batch_total":
                     progress_bar["maximum"] = payload
                     progress_bar["value"] = 0
+                    file_progress["value"] = 0
+                elif kind == "file_start":
+                    if payload is None:
+                        continue
+                    idx, total, file_path = payload
+                    file_progress["value"] = 0
+                    file_status_var.set(f"File {idx}/{total}: {os.path.basename(file_path)}")
                 elif kind == "batch_tick":
                     progress_bar["value"] = progress_bar["value"] + 1
+                elif kind == "file_done":
+                    if payload is None:
+                        continue
+                    idx, total = payload
+                    file_progress["value"] = 100
+                    file_status_var.set(f"File {idx}/{total}: done")
                 elif kind == "summary":
                     if payload is None:
                         continue
@@ -1409,7 +1426,14 @@ def gui_main():
     listbox.pack(fill="both", expand=False, padx=10, pady=10)
 
     progress_bar = ttk.Progressbar(root, mode="determinate")
-    progress_bar.pack(fill="x", padx=10)
+    progress_bar.pack(fill="x", padx=10, pady=(0, 5))
+
+    file_progress = ttk.Progressbar(root, mode="determinate", maximum=100)
+    file_progress.pack(fill="x", padx=10)
+
+    file_status_var = tk.StringVar(value="File: idle")
+    file_status_label = ttk.Label(root, textvariable=file_status_var)
+    file_status_label.pack(fill="x", padx=10, pady=(0, 5))
 
     status_var = tk.StringVar(value="Ready.")
     status_label = ttk.Label(root, textvariable=status_var)
@@ -1427,8 +1451,15 @@ def gui_main():
     summary_label = ttk.Label(root, text="Summary")
     summary_label.pack(anchor="w", padx=10)
 
-    summary_text = tk.Text(root, height=8, wrap="word")
-    summary_text.pack(fill="both", expand=True, padx=10, pady=5)
+    summary_frame = ttk.Frame(root)
+    summary_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+    summary_scroll = ttk.Scrollbar(summary_frame, orient="vertical")
+    summary_scroll.pack(side="right", fill="y")
+
+    summary_text = tk.Text(root, height=8, wrap="word", yscrollcommand=summary_scroll.set)
+    summary_text.pack(in_=summary_frame, fill="both", expand=True)
+    summary_scroll.config(command=summary_text.yview)
 
     process_queue()
     root.mainloop()
