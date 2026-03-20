@@ -3,6 +3,7 @@ import os
 import re
 import unicodedata
 import json
+import sys
 
 from googletrans import Translator # to translate text
 import asyncio
@@ -146,6 +147,62 @@ def select_docx_file():
 
     # Return None instead of empty string for better logic
     return file_path if file_path else None
+
+def load_settings():
+    try:
+        settings_path = Path(__file__).parent / "settings.json"
+    except NameError:
+        settings_path = Path.cwd() / "settings.json"
+
+    defaults = {
+        "api_key": "",
+        "source_lang": "EN",
+        "target_lang": "ES",
+        "open_settings_on_start": True
+    }
+
+    if not settings_path.exists():
+        try:
+            with open(settings_path, "w", encoding="utf-8") as f:
+                json.dump(defaults, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+        return defaults, settings_path
+
+    try:
+        with open(settings_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            merged = defaults.copy()
+            merged.update(data)
+            return merged, settings_path
+    except Exception:
+        pass
+
+    return defaults, settings_path
+
+def prompt_edit_settings(settings_path):
+    try:
+        answer = input(f"Edit settings now? ({settings_path}) (y/n): ").strip().lower()
+        if answer == "y":
+            if sys.platform.startswith("win"):
+                os.system(f'start "" "{settings_path}"')
+            elif sys.platform == "darwin":
+                os.system(f'open "{settings_path}"')
+            else:
+                os.system(f'xdg-open "{settings_path}"')
+    except Exception:
+        pass
+
+def validate_language_code(value, fallback="ES"):
+    if not isinstance(value, str):
+        return fallback
+    code = value.strip().upper()
+    if re.fullmatch(r"[A-Z]{2,3}", code):
+        return code
+    print(f"Warning: Invalid language code '{value}'. Using '{fallback}'.")
+    log_error("Invalid language code", value)
+    return fallback
 
 def prompt_add_another_file():
     try:
@@ -973,6 +1030,10 @@ def debug_paragraph_runs(run_info):
     print("-"*20, "All Paragraphs Run Info End", "-"*20)
 
 async def main():
+    settings, settings_path = load_settings()
+    if settings.get("open_settings_on_start"):
+        prompt_edit_settings(settings_path)
+
     print("Select .docx files to translate...")
 
     selected_files = []
@@ -1020,9 +1081,10 @@ async def main():
 
         try:
             open_mode = "file" if total_files == 1 else "none"
+            target_lang = validate_language_code(settings.get("target_lang", "ES"), "ES")
             output_path, output_dir = await translated_doc_creation(file_path,
                                                                     selected_document,
-                                                                    target_lang="ES",
+                                                                    target_lang=target_lang,
                                                                     open_mode=open_mode)
             if output_path:
                 successes += 1
