@@ -45,6 +45,17 @@ ERROR_LOG_DIR = "/home/juan-darquea/My_Projects/Projects/Docx_Translator_Files/E
 # create google translator object
 translator = Translator()
 
+def set_translator(new_translator):
+    global translator
+    translator = new_translator
+
+async def close_translator_client(translator_obj):
+    try:
+        if hasattr(translator_obj, "client"):
+            await translator_obj.client.aclose()
+    except Exception:
+        pass
+
 NON_TRANSLATABLE_PATTERNS = [
     re.compile(r"https?://[^\s]+|www\.[^\s]+", re.IGNORECASE),  # URLs
     re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b"),  # emails
@@ -535,7 +546,7 @@ def run_validation_checks(original_file_path, output_path, original_paragraphs, 
     else:
         print("\nValidation checks passed.")
 
-def run_quality_checks(original_texts, output_paragraphs):
+def run_quality_checks(original_texts, output_paragraphs, log_to_file=True):
     warnings = []
 
     for idx, (src_text, out_para) in enumerate(zip(original_texts, output_paragraphs), start=1):
@@ -571,9 +582,12 @@ def run_quality_checks(original_texts, output_paragraphs):
         print("\nQuality warnings:")
         for w in warnings:
             print(f"- {w}")
-        log_error("Quality warnings", "\n".join(warnings))
+        if log_to_file:
+            log_error("Quality warnings", "\n".join(warnings))
     else:
         print("\nQuality checks passed.")
+
+    return warnings
 
 class ProgressTracker:
     def __init__(self, total):
@@ -902,7 +916,7 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
         print("\nError: Could not read the selected file name.")
         print("Tip: Check the file name and try again.")
         log_error("Read file name error", e, file_path)
-        return
+        return None, None, None, []
 
     try:
         output_dir = (os.getenv("lin_translated_docs_dir")
@@ -914,7 +928,7 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
             print("\nError: No output directory defined.")
             print("Tip: Set 'translated_docs_dir' or choose a file in a writable folder.")
             log_error("Output directory missing", "No output directory", file_path)
-            return
+            return None, None, None, []
 
         safe_base = "".join(name_no_ext.split())
         safe_base = re.sub(r'[\\/:\*\?"<>\|]', "", safe_base)
@@ -929,7 +943,7 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
         print("\nError: Could not determine output directory.")
         print("Tip: Check environment variables or file permissions.")
         log_error("Output directory error", e, file_path)
-        return
+        return None, None, None, []
 
     try:
         total_paragraphs = count_paragraphs_in_document(trans_file)
@@ -961,19 +975,20 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
             "elapsed": format_duration(progress.elapsed()),
         }
         run_validation_checks(file_path, output_path, original_paragraphs, original_text_flags)
+        quality_warnings = []
         try:
             output_paragraphs = collect_all_paragraphs(Document(output_path))
-            run_quality_checks(original_texts, output_paragraphs)
+            quality_warnings = run_quality_checks(original_texts, output_paragraphs, log_to_file=(open_mode != "none"))
         except Exception as e:
             log_error("Quality check error", e, file_path)
         confirm_success(output_path, stats, open_mode=open_mode, output_dir=output_dir)
-        return output_path, output_dir, stats
+        return output_path, output_dir, stats, quality_warnings
 
     except Exception as e:
             print("\nError: Translation failed while writing the output file.")
             print("Tip: Check disk space and file permissions, then try again.")
             log_error("Translation/output error", e, file_path)
-            return None, None, None
+            return None, None, None, []
 
 def inspect_tables(selected_document):
     """"""
@@ -1106,10 +1121,10 @@ async def main():
         try:
             open_mode = "file" if total_files == 1 else "none"
             target_lang = validate_language_code(settings.get("target_lang", "ES"), "ES")
-            output_path, output_dir, _stats = await translated_doc_creation(file_path,
-                                                                            selected_document,
-                                                                            target_lang=target_lang,
-                                                                            open_mode=open_mode)
+            output_path, output_dir, _stats, _quality_warnings = await translated_doc_creation(file_path,
+                                                                                               selected_document,
+                                                                                               target_lang=target_lang,
+                                                                                               open_mode=open_mode)
             if output_path:
                 successes += 1
                 if total_files > 1 and output_dir:
@@ -1170,6 +1185,12 @@ def gui_main():
     def clear_files():
         selected_files.clear()
         listbox.delete(0, "end")
+        progress_bar["value"] = 0
+        status_var.set("Ready.")
+        summary_text.delete("1.0", "end")
+        start_btn.config(state="normal")
+        stop_btn.config(state="disabled")
+        stop_flag["stop"] = False
 
     def on_open_settings():
         win = tk.Toplevel(root)
@@ -1250,6 +1271,8 @@ def gui_main():
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        local_translator = Translator()
+        set_translator(local_translator)
 
         for idx, file_path in enumerate(selected_files, start=1):
             if stop_flag["stop"]:
@@ -1275,7 +1298,7 @@ def gui_main():
 
             try:
                 target_lang = validate_language_code(settings.get("target_lang", "ES"), "ES")
-                output_path, output_dir, stats = loop.run_until_complete(
+                output_path, output_dir, stats, quality_warnings = loop.run_until_complete(
                     translated_doc_creation(
                         file_path,
                         selected_document,
@@ -1286,7 +1309,7 @@ def gui_main():
                 if output_path:
                     successes += 1
                     batch_output_dir = output_dir
-                    ui_queue.put(("summary", (file_path, output_path, stats)))
+                    ui_queue.put(("summary", (file_path, output_path, stats, quality_warnings)))
                 else:
                     failures += 1
                     batch_errors.append((file_path, "Translation failed"))
@@ -1297,6 +1320,7 @@ def gui_main():
             finally:
                 ui_queue.put(("batch_tick", None))
 
+        loop.run_until_complete(close_translator_client(local_translator))
         loop.close()
         ui_queue.put(("batch_done", (successes, failures, batch_errors, batch_output_dir)))
 
@@ -1330,7 +1354,7 @@ def gui_main():
                 elif kind == "summary":
                     if payload is None:
                         continue
-                    file_path, output_path, stats = payload
+                    file_path, output_path, stats, quality_warnings = payload
                     summary_text.insert("end", f"\n{file_path}\n")
                     summary_text.insert("end", f"Output: {output_path}\n")
                     summary_text.insert(
@@ -1339,6 +1363,10 @@ def gui_main():
                         f"Images: {stats['images']} | Headers/Footers: {stats['headers_footers']} | "
                         f"Time: {stats['elapsed']}\n"
                     )
+                    if quality_warnings:
+                        summary_text.insert("end", "Quality warnings:\n")
+                        for w in quality_warnings:
+                            summary_text.insert("end", f"- {w}\n")
                     summary_text.see("end")
                 elif kind == "batch_done":
                     if payload is None:
