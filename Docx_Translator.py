@@ -211,6 +211,13 @@ def open_settings_file(settings_path):
     except Exception:
         pass
 
+def save_settings(settings, settings_path):
+    try:
+        with open(settings_path, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
 def validate_language_code(value, fallback="ES"):
     if not isinstance(value, str):
         return fallback
@@ -1165,7 +1172,63 @@ def gui_main():
         listbox.delete(0, "end")
 
     def on_open_settings():
-        open_settings_file(settings_path)
+        win = tk.Toplevel(root)
+        win.title("Settings")
+        win.geometry("420x260")
+
+        ttk.Label(win, text="Target Language").pack(anchor="w", padx=10, pady=5)
+
+        languages = [
+            ("Spanish", "ES"),
+            ("English", "EN"),
+            ("Portuguese", "PT"),
+            ("Italian", "IT"),
+            ("French", "FR"),
+            ("Chinese", "ZH-CN"),
+        ]
+
+        lang_var = tk.StringVar(value=settings.get("target_lang", "ES"))
+        lang_menu = ttk.Combobox(
+            win,
+            values=[f"{label} ({code})" for label, code in languages],
+            state="readonly"
+        )
+        code_to_label = {code: f"{label} ({code})" for label, code in languages}
+        if lang_var.get() in code_to_label:
+            lang_menu.set(code_to_label[lang_var.get()])
+        else:
+            lang_menu.set("Spanish (ES)")
+        lang_menu.pack(fill="x", padx=10)
+
+        open_settings_var = tk.BooleanVar(value=bool(settings.get("open_settings_on_start")))
+        ttk.Checkbutton(
+            win,
+            text="Open settings on start",
+            variable=open_settings_var
+        ).pack(anchor="w", padx=10, pady=10)
+
+        use_gui_var = tk.BooleanVar(value=bool(settings.get("use_gui")))
+        ttk.Checkbutton(
+            win,
+            text="Use GUI (disable to use CLI)",
+            variable=use_gui_var
+        ).pack(anchor="w", padx=10, pady=5)
+
+        def save_and_close():
+            selection = lang_menu.get()
+            for label, code in languages:
+                if selection.startswith(label):
+                    settings["target_lang"] = code
+                    break
+            settings["open_settings_on_start"] = open_settings_var.get()
+            settings["use_gui"] = use_gui_var.get()
+            save_settings(settings, settings_path)
+            win.destroy()
+
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(fill="x", padx=10, pady=10)
+        ttk.Button(btn_frame, text="Save", command=save_and_close).pack(side="right")
+        ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side="right", padx=5)
 
     def set_status(msg):
         status_var.set(msg)
