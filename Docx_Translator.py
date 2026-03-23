@@ -6,11 +6,15 @@ import json
 import sys
 import threading
 import queue
+import deepl # to translate text with contextual accuracy
+import time
+import traceback
+import webbrowser
+import asyncio
+import tkinter as tk
 
 from googletrans import Translator # to translate text
-import asyncio
 from pathlib import Path
-import tkinter as tk
 from tkinter import Tk
 from tkinter import filedialog as fd
 from tkinter import messagebox
@@ -22,11 +26,6 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 from datetime import datetime
 
-# unused imports
-import deepl # to translate text with contextual accuracy
-import time
-import traceback
-import webbrowser
 
 # load the .env file from the same directory as this script
 try:
@@ -40,10 +39,21 @@ load_dotenv(env_path) # load environment variables from .env file
 rate_limit_minute = 450  # translator plan rate limit: 450 requests per minute
 delay_between_requests = 60/rate_limit_minute  # calculate delay between requests in seconds
 max_retries = 5 # maximum number of retries for failed requests
-ERROR_LOG_DIR = "/home/juan-darquea/My_Projects/Projects/Docx_Translator_Files/Error_Logs"
+try:
+    _base_dir = Path(__file__).parent
+except NameError:
+    _base_dir = Path.cwd()
+
+ERROR_LOG_DIR = os.getenv("lin_error_logs_dir") or os.getenv("error_logs_dir") or str(_base_dir)
 
 # create google translator object
+TRANSLATION_PROVIDER = "deepl"  # change to "deepl" to use DeepL
+TRANSLATION_MEMORY_ENABLED = True
+TRANSLATION_MEMORY_PATH = None
+translation_memory = {}
+
 translator = Translator()
+deepl_translator = None
 
 def set_translator(new_translator):
     global translator
@@ -55,6 +65,41 @@ async def close_translator_client(translator_obj):
             await translator_obj.client.aclose()
     except Exception:
         pass
+
+def get_deepl_translator():
+    global deepl_translator
+    if deepl_translator is not None:
+        return deepl_translator
+
+    auth_key = os.getenv("deepL_auth_key")
+    if not auth_key:
+        raise RuntimeError("DeepL API key not found. Set DEEPL_API_KEY in Project_env.env.")
+
+    deepl_translator = deepl.Translator(auth_key)
+    return deepl_translator
+
+async def provider_translate(text, target_lang):
+    if TRANSLATION_PROVIDER == "deepl":
+        if TRANSLATION_MEMORY_ENABLED:
+            key = f"{target_lang}||{text}"
+            cached = translation_memory.get(key)
+            if cached is not None:
+                return cached
+
+        translator_obj = get_deepl_translator()
+        result = await asyncio.to_thread(
+            translator_obj.translate_text,
+            text,
+            target_lang=target_lang
+        )
+        translated = result.text or ""
+        if TRANSLATION_MEMORY_ENABLED:
+            translation_memory[key] = translated
+        return translated
+
+    # default to googletrans
+    result = await translator.translate(text, dest=target_lang)
+    return result.text
 
 NON_TRANSLATABLE_PATTERNS = [
     re.compile(r"https?://[^\s]+|www\.[^\s]+", re.IGNORECASE),  # URLs
@@ -175,7 +220,8 @@ def load_settings():
         "source_lang": "EN",
         "target_lang": "ES",
         "open_settings_on_start": True,
-        "use_gui": True
+        "use_gui": True,
+        "translation_memory_file": "translation_memory.json"
     }
 
     if not settings_path.exists():
@@ -197,6 +243,35 @@ def load_settings():
         pass
 
     return defaults, settings_path
+
+def init_translation_memory(settings, base_dir):
+    global TRANSLATION_MEMORY_PATH, translation_memory
+    filename = settings.get("translation_memory_file") or "translation_memory.json"
+    TRANSLATION_MEMORY_PATH = str(base_dir / filename)
+
+    if TRANSLATION_PROVIDER != "deepl":
+        translation_memory = {}
+        return
+
+    try:
+        if os.path.exists(TRANSLATION_MEMORY_PATH):
+            with open(TRANSLATION_MEMORY_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                translation_memory = data
+    except Exception:
+        translation_memory = {}
+
+def save_translation_memory():
+    if TRANSLATION_PROVIDER != "deepl":
+        return
+    if not TRANSLATION_MEMORY_PATH:
+        return
+    try:
+        with open(TRANSLATION_MEMORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(translation_memory, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
 
 def prompt_edit_settings(settings_path):
     try:
@@ -659,9 +734,9 @@ async def translate_text_preserving_whitespace(text, target_lang):
         return text
 
     protected_text, replacements = protect_non_translatables(core_text)
-    result = await translator.translate(protected_text, dest=target_lang)
+    result_text = await provider_translate(protected_text, target_lang)
     await asyncio.sleep(delay_between_requests)
-    translated_core = restore_non_translatables(result.text, replacements)
+    translated_core = restore_non_translatables(result_text, replacements)
     translated_core = normalize_unicode(translated_core)
     return f"{leading_ws}{translated_core}{trailing_ws}"
 
@@ -967,6 +1042,7 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
         progress.finish()
 
         trans_file.save(output_path)
+        save_translation_memory()
         stats = {
             "paragraphs": total_paragraphs,
             "tables": total_tables,
@@ -1070,6 +1146,7 @@ def debug_paragraph_runs(run_info):
 
 async def main():
     settings, settings_path = load_settings()
+    init_translation_memory(settings, Path(settings_path).parent)
     if settings.get("open_settings_on_start"):
         prompt_edit_settings(settings_path)
 
@@ -1161,6 +1238,7 @@ async def main():
 
 def gui_main():
     settings, settings_path = load_settings()
+    init_translation_memory(settings, Path(settings_path).parent)
 
     root = Tk()
     root.title("Docx Translator")
@@ -1324,6 +1402,7 @@ def gui_main():
             finally:
                 ui_queue.put(("batch_tick", None))
 
+        save_translation_memory()
         loop.run_until_complete(close_translator_client(local_translator))
         loop.close()
         ui_queue.put(("batch_done", (successes, failures, batch_errors, batch_output_dir)))

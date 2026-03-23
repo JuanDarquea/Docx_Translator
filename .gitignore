@@ -28,5 +28,6 @@ Translated_Docs/
 *.txt
 README.md
 
-# Settings file
+# Settings and memory files
 settings.json
+translation_memory.json
