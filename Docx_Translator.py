@@ -393,6 +393,9 @@ def get_ui_strings(settings):
     return UI_STRINGS.get(lang, UI_STRINGS["EN"])
 
 def show_language_selector(settings, settings_path):
+    if settings.get("ui_language"):
+        return
+
     lang_root = Tk()
     lang_root.title("Language")
     lang_root.geometry("360x180")
@@ -401,10 +404,7 @@ def show_language_selector(settings, settings_path):
     label = ttk.Label(lang_root, text=UI_STRINGS["EN"]["language_prompt"])
     label.pack(pady=15)
 
-    choice = {"lang": settings.get("ui_language", "EN")}
-
     def set_lang(lang_code):
-        choice["lang"] = lang_code
         settings["ui_language"] = lang_code
         save_settings(settings, settings_path)
         lang_root.destroy()
@@ -1378,6 +1378,7 @@ def gui_main():
     selected_files = []
     stop_flag = {"stop": False}
     ui_queue = queue.Queue()
+    skip_lang_reset = {"skip": False}
 
     def add_files():
         files = fd.askopenfilenames(
@@ -1473,6 +1474,7 @@ def gui_main():
                 settings["ui_language"] = "EN"
             save_settings(settings, settings_path)
             if settings["ui_language"] != previous_ui_lang:
+                skip_lang_reset["skip"] = True
                 root.destroy()
                 gui_main()
             win.destroy()
@@ -1700,6 +1702,14 @@ def gui_main():
     summary_scroll.config(command=summary_text.yview)
 
     process_queue()
+
+    def on_close():
+        if not skip_lang_reset["skip"]:
+            settings["ui_language"] = ""
+            save_settings(settings, settings_path)
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_close)
     root.mainloop()
 
 if __name__=="__main__":
