@@ -47,7 +47,7 @@ except NameError:
 ERROR_LOG_DIR = os.getenv("lin_error_logs_dir") or os.getenv("error_logs_dir") or str(_base_dir)
 
 # create google translator object
-TRANSLATION_PROVIDER = "deepl"  # change to "deepl" to use DeepL
+TRANSLATION_PROVIDER = "googletrans"  # change to "deepl" to use DeepL
 TRANSLATION_MEMORY_ENABLED = True
 TRANSLATION_MEMORY_PATH = None
 translation_memory = {}

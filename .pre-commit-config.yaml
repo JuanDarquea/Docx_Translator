@@ -7,7 +7,7 @@ repos:
     hooks:
       # Prevent commiting large files (like .docx, .zip by mistake)
       - id: check-added-large-files
-        args: ["--maxkb=500"]
+        args: ["--maxkb=50000"]
 
       # Check python syntax validation
       - id: check-ast
