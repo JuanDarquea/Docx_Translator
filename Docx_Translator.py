@@ -287,6 +287,12 @@ def prompt_edit_settings(settings_path):
     except Exception:
         pass
 
+def select_output_folder():
+    try:
+        return fd.askdirectory(title="Choose output folder")
+    except Exception:
+        return ""
+
 def open_settings_file(settings_path):
     try:
         if sys.platform.startswith("win"):
@@ -322,7 +328,18 @@ UI_STRINGS = {
         "batch_start": "Batch start: {count} file(s).",
         "processing_file": "Processing file {idx}/{total}: {file}",
         "batch_completed": "Batch completed.",
+        "all_files_ok": "All files translated successfully.",
         "open_folder": "Open translated files folder?",
+        "summary_output": "Output",
+        "summary_paragraphs": "Paragraphs",
+        "summary_tables": "Tables",
+        "summary_images": "Images",
+        "summary_headers": "Headers/Footers",
+        "summary_time": "Time",
+        "quality_warnings": "Quality warnings",
+        "warn_length_ratio": "Paragraph #{idx} length ratio suspicious (src {src} vs out {out}).",
+        "warn_english_words": "Paragraph #{idx} contains common English words.",
+        "warn_known_translation": "Paragraph #{idx} may have missed known translation for '{phrase}'.",
         "settings_title": "Settings",
         "target_language": "Target Language",
         "open_settings_start": "Open settings on start",
@@ -348,7 +365,18 @@ UI_STRINGS = {
         "batch_start": "Inicio de lote: {count} archivo(s).",
         "processing_file": "Procesando archivo {idx}/{total}: {file}",
         "batch_completed": "Lote completado.",
+        "all_files_ok": "Todos los archivos fueron traducidos correctamente.",
         "open_folder": "¿Abrir la carpeta de archivos traducidos?",
+        "summary_output": "Salida",
+        "summary_paragraphs": "Párrafos",
+        "summary_tables": "Tablas",
+        "summary_images": "Imágenes",
+        "summary_headers": "Encabezados/Pies",
+        "summary_time": "Tiempo",
+        "quality_warnings": "Advertencias de calidad",
+        "warn_length_ratio": "El párrafo #{idx} tiene una proporción sospechosa (orig {src} vs trad {out}).",
+        "warn_english_words": "El párrafo #{idx} contiene palabras comunes en inglés.",
+        "warn_known_translation": "El párrafo #{idx} pudo omitir la traducción conocida de '{phrase}'.",
         "settings_title": "Configuración",
         "target_language": "Idioma de salida",
         "open_settings_start": "Abrir configuración al inicio",
@@ -706,7 +734,7 @@ def run_validation_checks(original_file_path, output_path, original_paragraphs, 
     else:
         print("\nValidation checks passed.")
 
-def run_quality_checks(original_texts, output_paragraphs, log_to_file=True):
+def run_quality_checks(original_texts, output_paragraphs, log_to_file=True, ui=None):
     warnings = []
 
     for idx, (src_text, out_para) in enumerate(zip(original_texts, output_paragraphs), start=1):
@@ -720,23 +748,34 @@ def run_quality_checks(original_texts, output_paragraphs, log_to_file=True):
         if len(src) > 0:
             ratio = len(out) / max(len(src), 1)
             if ratio < 0.5 or ratio > 2.0:
-                warnings.append(
+                msg = (
+                    ui["warn_length_ratio"].format(idx=idx, src=len(src), out=len(out))
+                    if ui else
                     f"Paragraph #{idx} length ratio suspicious (src {len(src)} vs out {len(out)})."
                 )
+                warnings.append(msg)
 
         # Flag common English words that remain.
         out_words = re.findall(r"[A-Za-z']+", out.lower())
         if any(w in COMMON_ENGLISH_WORDS for w in out_words):
-            warnings.append(f"Paragraph #{idx} contains common English words.")
+            msg = (
+                ui["warn_english_words"].format(idx=idx)
+                if ui else
+                f"Paragraph #{idx} contains common English words."
+            )
+            warnings.append(msg)
 
         # Known translation checks (simple substring match).
         src_l = src.lower()
         out_l = out.lower()
         for k, v in KNOWN_TRANSLATIONS.items():
             if k in src_l and v not in out_l:
-                warnings.append(
+                msg = (
+                    ui["warn_known_translation"].format(idx=idx, phrase=k)
+                    if ui else
                     f"Paragraph #{idx} may have missed known translation for '{k}'."
                 )
+                warnings.append(msg)
 
     if warnings:
         print("\nQuality warnings:")
@@ -1053,7 +1092,7 @@ async def translate_header_footer_in_place(document, target_lang, progress=None)
                 elif block_type == "table":
                     await translate_table_in_place(block, target_lang, progress)
 
-async def translated_doc_creation(file_path, selected_document, target_lang="ES", open_mode="file"):
+async def translated_doc_creation(file_path, selected_document, target_lang="ES", open_mode="file", ui_strings=None):
     """
     Function to create an output file and write translated text into the new file.
     Returns:
@@ -1139,7 +1178,12 @@ async def translated_doc_creation(file_path, selected_document, target_lang="ES"
         quality_warnings = []
         try:
             output_paragraphs = collect_all_paragraphs(Document(output_path))
-            quality_warnings = run_quality_checks(original_texts, output_paragraphs, log_to_file=(open_mode != "none"))
+            quality_warnings = run_quality_checks(
+                original_texts,
+                output_paragraphs,
+                log_to_file=(open_mode != "none"),
+                ui=ui_strings
+            )
         except Exception as e:
             log_error("Quality check error", e, file_path)
         confirm_success(output_path, stats, open_mode=open_mode, output_dir=output_dir)
@@ -1393,6 +1437,19 @@ def gui_main():
             variable=open_settings_var
         ).pack(anchor="w", padx=10, pady=10)
 
+        ttk.Label(win, text=ui["language_prompt"]).pack(anchor="w", padx=10, pady=5)
+        ui_lang_var = tk.StringVar(value=settings.get("ui_language", "EN"))
+        ui_lang_menu = ttk.Combobox(
+            win,
+            values=[f"{ui['english']} (EN)", f"{ui['spanish']} (ES)"],
+            state="readonly"
+        )
+        if ui_lang_var.get().upper() == "ES":
+            ui_lang_menu.set(f"{ui['spanish']} (ES)")
+        else:
+            ui_lang_menu.set(f"{ui['english']} (EN)")
+        ui_lang_menu.pack(fill="x", padx=10)
+
         use_gui_var = tk.BooleanVar(value=bool(settings.get("use_gui")))
         ttk.Checkbutton(
             win,
@@ -1401,6 +1458,7 @@ def gui_main():
         ).pack(anchor="w", padx=10, pady=5)
 
         def save_and_close():
+            previous_ui_lang = settings.get("ui_language", "EN")
             selection = lang_menu.get()
             for label, code in languages:
                 if selection.startswith(label):
@@ -1408,7 +1466,15 @@ def gui_main():
                     break
             settings["open_settings_on_start"] = open_settings_var.get()
             settings["use_gui"] = use_gui_var.get()
+            ui_selection = ui_lang_menu.get()
+            if ui_selection.endswith("(ES)"):
+                settings["ui_language"] = "ES"
+            else:
+                settings["ui_language"] = "EN"
             save_settings(settings, settings_path)
+            if settings["ui_language"] != previous_ui_lang:
+                root.destroy()
+                gui_main()
             win.destroy()
 
         btn_frame = ttk.Frame(win)
@@ -1469,7 +1535,8 @@ def gui_main():
                         file_path,
                         selected_document,
                         target_lang=target_lang,
-                        open_mode="none"
+                        open_mode="none",
+                        ui_strings=ui
                     )
                 )
                 if output_path:
@@ -1498,6 +1565,11 @@ def gui_main():
         if not selected_files:
             messagebox.showwarning("No files", ui["no_files"])
             return
+        output_dir = select_output_folder()
+        if not output_dir:
+            return
+        settings["translated_docs_dir"] = output_dir
+        os.environ["translated_docs_dir"] = output_dir
         start_btn.config(state="disabled")
         stop_btn.config(state="normal")
         thread = threading.Thread(target=worker, daemon=True)
@@ -1539,15 +1611,15 @@ def gui_main():
                         continue
                     file_path, output_path, stats, quality_warnings = payload
                     summary_text.insert("end", f"\n{file_path}\n")
-                    summary_text.insert("end", f"Output: {output_path}\n")
+                    summary_text.insert("end", f"{ui['summary_output']}: {output_path}\n")
                     summary_text.insert(
                         "end",
-                        f"Paragraphs: {stats['paragraphs']} | Tables: {stats['tables']} | "
-                        f"Images: {stats['images']} | Headers/Footers: {stats['headers_footers']} | "
-                        f"Time: {stats['elapsed']}\n"
+                        f"{ui['summary_paragraphs']}: {stats['paragraphs']} | {ui['summary_tables']}: {stats['tables']} | "
+                        f"{ui['summary_images']}: {stats['images']} | {ui['summary_headers']}: {stats['headers_footers']} | "
+                        f"{ui['summary_time']}: {stats['elapsed']}\n"
                     )
                     if quality_warnings:
-                        summary_text.insert("end", "Quality warnings:\n")
+                        summary_text.insert("end", f"{ui['quality_warnings']}:\n")
                         for w in quality_warnings:
                             summary_text.insert("end", f"- {w}\n")
                     summary_text.see("end")
@@ -1563,7 +1635,7 @@ def gui_main():
                         msg = "\n".join([f"{fp} | {reason}" for fp, reason in batch_errors])
                         messagebox.showwarning(ui["batch_completed"], msg)
                     else:
-                        messagebox.showinfo(ui["batch_completed"], "All files translated successfully.")
+                        messagebox.showinfo(ui["batch_completed"], ui["all_files_ok"])
 
                     if output_dir:
                         if messagebox.askyesno(ui["batch_completed"], ui["open_folder"]):
