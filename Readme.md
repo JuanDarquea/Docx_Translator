@@ -1,12 +1,12 @@
-# 📄 Docx_Translator
+# Docx_Translator
 
-A Python tool for translating Microsoft Word (`.docx`) documents from English language to Spanish language while preserving the document structure.
+A Windows-first desktop tool for translating Microsoft Word (`.docx`) documents while preserving structure, formatting, tables, headers/footers, and images.
 
 ---
 
-## 🚀 Overview
+## Overview
 
-**Docx_Translator** is a learning-oriented Python project that reads a `.docx` file, processes its internal structure (paragraphs and runs), translates the text into a target language, and writes the translated content into a new `.docx` file.
+**Docx_Translator** reads a `.docx` file, translates content (paragraphs, tables, headers/footers), preserves formatting, and saves a new `.docx`.
 
 This project is especially useful if you:
 
@@ -17,52 +17,53 @@ This project is especially useful if you:
 
 ---
 
-## ✨ Features
+## Features
 
-- ✅ Reads `.docx` files using `python-docx`
-- ✅ Translates paragraph text to a target language
-- ✅ Generates a new translated `.docx` file
-- ✅ Modular code structure for learning and extension
-- 🧠 Educational focus: explores **paragraphs**, **runs**, and formatting
+- GUI (Tkinter) with batch processing
+- Per-file and batch progress with ETA
+- Preserves runs/formatting, tables, headers/footers, and images
+- Language selection UI (English/Spanish)
+- Settings dialog for output language and options
+- Validation + quality checks
+- Optional DeepL provider (via API key)
+- Translation memory (DeepL only)
 
 ### Current limitations
 
-- ❌ Does not yet preserve all text formatting (runs are being studied)
-- ❌ No support for tables, images, headers, or footers (yet)
-- ❌ API rate limits depend on the translation provider
+- Windows packaging only (for now)
+- DeepL requires a valid API key
 
 ---
 
-## 🧠 How It Works (Conceptually)
+## How It Works (Conceptually)
 
-1. Load a `.docx` file
-2. Iterate through paragraphs
-3. Inspect and analyze runs inside each paragraph
-4. Send text to a translation service
-5. Write translated text into a new document
+1. Load `.docx`
+2. Translate content in-place (runs, tables, headers/footers)
+3. Preserve formatting and images
+4. Save translated `.docx`
 
 This project intentionally exposes these steps to make the learning process explicit.
 
 ---
 
-## 🛠️ Requirements
+## Requirements
 
-- Python **3.7+**
+- Python **3.10+** (recommended)
 - A virtual environment (recommended)
 - Dependencies listed in `requirements.txt`
 
 ---
 
-## 📦 Installation
+## Installation (Dev)
 
-### 1️⃣ Clone the repository
+### 1) Clone the repository
 
 ```bash
 git clone https://github.com/JuanDarquea/Docx_Translator.git
 cd Docx_Translator
 ```
 
-### 2️⃣ Create and activate a virtual environment
+### 2) Create and activate a virtual environment
 
 ```bash
 python -m venv .venv
@@ -70,7 +71,7 @@ source .venv/bin/activate  # Linux / macOS
 # .venv\\Scripts\\activate  # Windows
 ```
 
-### 3️⃣ Install dependencies
+### 3) Install dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -78,46 +79,74 @@ pip install -r requirements.txt
 
 ---
 
-## ▶️ Usage
+## Usage (Dev)
 
 Basic example:
 
 ```bash
 python Docx_Translator.py
-# a pop-up window will appear for you to choose the file to translate, languages are set for now and the output path will be the same as this file.
 ```
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```text
 Docx_Translator/
 │
 ├── Docx_Translator.py      # Main script
-├── requirements.txt       # Python dependencies
-├── README.md              # Project documentation
-├── .gitignore
-└── examples/              # Sample documents (optional)
+├── settings.json           # App settings
+├── Project_env.env         # Environment variables (DeepL key, error log path)
+├── Files/                  # Quality rules + protected words
+├── translation_memory.json # Translation memory (DeepL only)
+├── build_windows.bat       # One-click Windows build
+├── requirements.txt
+└── README.md
 ```
 
 ---
 
-## 📚 Learning Goals of This Project
+## Windows Build (One Click)
 
-This repository is also a **learning lab**. The goals include:
+1. Ensure `.venv` exists and dependencies are installed:
+   ```bash
+   .venv\Scripts\activate
+   pip install -r requirements.txt
+   pip install pyinstaller
+   ```
+2. Run:
+   ```bash
+   build_windows.bat
+   ```
+3. Output:
+   ```text
+   dist\Docx_Translator.exe
+   ```
 
-- Understanding how Word documents store text
-- Learning why text is split into multiple **runs**
-- Practicing clean Python structure
-- Working with virtual environments
-- Using Git and GitHub effectively
+## Download for Use
 
-If you are learning Python or document automation, this project is designed to grow with you.
+Once a release is published, download the Windows installer or `.exe` from the project’s Releases page.
+Until then, use the Windows build steps above to produce your own `Docx_Translator.exe`.
+
+## DeepL Setup
+
+Add your key to `Project_env.env`:
+```
+DEEPL_API_KEY=your_key_here
+```
+
+Switch provider in `Docx_Translator.py`:
+```
+TRANSLATION_PROVIDER = "deepl"
+```
+
+## Notes
+
+This project is evolving from a learning lab into a production-ready desktop tool.
 
 ---
 
-## 🧑‍🤝‍🧑 Contributing
+## Contributing
 
 Contributions are welcome — especially improvements that:
 
@@ -138,13 +167,11 @@ Contributions are welcome — especially improvements that:
 
 ---
 
-## 🧭 Roadmap
+## Roadmap
 
-- [ ] Preserve runs and formatting
-- [ ] Translate tables
-- [ ] CLI improvements
-- [ ] Config file support
-- [ ] Multiple translation providers
+- [ ] Windows installer (Inno Setup)
+- [ ] Signed executable
+- [ ] Auto-updates
 
 ---
 
