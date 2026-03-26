@@ -221,6 +221,7 @@ def load_settings():
         "target_lang": "ES",
         "open_settings_on_start": True,
         "use_gui": True,
+        "ui_language": "EN",
         "translation_memory_file": "translation_memory.json"
     }
 
@@ -303,6 +304,90 @@ def save_settings(settings, settings_path):
             json.dump(settings, f, indent=2, ensure_ascii=False)
     except Exception:
         pass
+
+UI_STRINGS = {
+    "EN": {
+        "app_title": "Docx Translator",
+        "language_prompt": "Choose interface language",
+        "english": "English",
+        "spanish": "Spanish",
+        "select_files": "Select .docx files to translate...",
+        "add_files": "Add Files",
+        "clear_list": "Clear List",
+        "settings": "Settings",
+        "start": "Start",
+        "stop": "Stop",
+        "summary": "Summary",
+        "no_files": "Please add at least one .docx file.",
+        "batch_start": "Batch start: {count} file(s).",
+        "processing_file": "Processing file {idx}/{total}: {file}",
+        "batch_completed": "Batch completed.",
+        "open_folder": "Open translated files folder?",
+        "settings_title": "Settings",
+        "target_language": "Target Language",
+        "open_settings_start": "Open settings on start",
+        "use_gui": "Use GUI (disable to use CLI)",
+        "save": "Save",
+        "cancel": "Cancel",
+        "file_idle": "File: idle",
+        "ready": "Ready."
+    },
+    "ES": {
+        "app_title": "Traductor Docx",
+        "language_prompt": "Elige el idioma de la interfaz",
+        "english": "Inglés",
+        "spanish": "Español",
+        "select_files": "Seleccione archivos .docx para traducir...",
+        "add_files": "Agregar archivos",
+        "clear_list": "Limpiar lista",
+        "settings": "Configuración",
+        "start": "Iniciar",
+        "stop": "Detener",
+        "summary": "Resumen",
+        "no_files": "Agregue al menos un archivo .docx.",
+        "batch_start": "Inicio de lote: {count} archivo(s).",
+        "processing_file": "Procesando archivo {idx}/{total}: {file}",
+        "batch_completed": "Lote completado.",
+        "open_folder": "¿Abrir la carpeta de archivos traducidos?",
+        "settings_title": "Configuración",
+        "target_language": "Idioma de salida",
+        "open_settings_start": "Abrir configuración al inicio",
+        "use_gui": "Usar GUI (deshabilitar para CLI)",
+        "save": "Guardar",
+        "cancel": "Cancelar",
+        "file_idle": "Archivo: en espera",
+        "ready": "Listo."
+    }
+}
+
+def get_ui_strings(settings):
+    lang = (settings.get("ui_language") or "EN").upper()
+    return UI_STRINGS.get(lang, UI_STRINGS["EN"])
+
+def show_language_selector(settings, settings_path):
+    lang_root = Tk()
+    lang_root.title("Language")
+    lang_root.geometry("360x180")
+    lang_root.resizable(False, False)
+
+    label = ttk.Label(lang_root, text=UI_STRINGS["EN"]["language_prompt"])
+    label.pack(pady=15)
+
+    choice = {"lang": settings.get("ui_language", "EN")}
+
+    def set_lang(lang_code):
+        choice["lang"] = lang_code
+        settings["ui_language"] = lang_code
+        save_settings(settings, settings_path)
+        lang_root.destroy()
+
+    btn_frame = ttk.Frame(lang_root)
+    btn_frame.pack(pady=10)
+
+    ttk.Button(btn_frame, text=UI_STRINGS["EN"]["english"], command=lambda: set_lang("EN")).pack(side="left", padx=10)
+    ttk.Button(btn_frame, text=UI_STRINGS["EN"]["spanish"], command=lambda: set_lang("ES")).pack(side="left", padx=10)
+
+    lang_root.mainloop()
 
 def validate_language_code(value, fallback="ES"):
     if not isinstance(value, str):
@@ -1239,9 +1324,11 @@ async def main():
 def gui_main():
     settings, settings_path = load_settings()
     init_translation_memory(settings, Path(settings_path).parent)
+    show_language_selector(settings, settings_path)
+    ui = get_ui_strings(settings)
 
     root = Tk()
-    root.title("Docx Translator")
+    root.title(ui["app_title"])
     root.geometry("720x520")
 
     selected_files = []
@@ -1264,7 +1351,7 @@ def gui_main():
         selected_files.clear()
         listbox.delete(0, "end")
         progress_bar["value"] = 0
-        status_var.set("Ready.")
+        status_var.set(ui["ready"])
         summary_text.delete("1.0", "end")
         start_btn.config(state="normal")
         stop_btn.config(state="disabled")
@@ -1272,10 +1359,10 @@ def gui_main():
 
     def on_open_settings():
         win = tk.Toplevel(root)
-        win.title("Settings")
+        win.title(ui["settings_title"])
         win.geometry("420x260")
 
-        ttk.Label(win, text="Target Language").pack(anchor="w", padx=10, pady=5)
+        ttk.Label(win, text=ui["target_language"]).pack(anchor="w", padx=10, pady=5)
 
         languages = [
             ("Spanish", "ES"),
@@ -1302,14 +1389,14 @@ def gui_main():
         open_settings_var = tk.BooleanVar(value=bool(settings.get("open_settings_on_start")))
         ttk.Checkbutton(
             win,
-            text="Open settings on start",
+            text=ui["open_settings_start"],
             variable=open_settings_var
         ).pack(anchor="w", padx=10, pady=10)
 
         use_gui_var = tk.BooleanVar(value=bool(settings.get("use_gui")))
         ttk.Checkbutton(
             win,
-            text="Use GUI (disable to use CLI)",
+            text=ui["use_gui"],
             variable=use_gui_var
         ).pack(anchor="w", padx=10, pady=5)
 
@@ -1326,8 +1413,8 @@ def gui_main():
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(fill="x", padx=10, pady=10)
-        ttk.Button(btn_frame, text="Save", command=save_and_close).pack(side="right")
-        ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side="right", padx=5)
+        ttk.Button(btn_frame, text=ui["save"], command=save_and_close).pack(side="right")
+        ttk.Button(btn_frame, text=ui["cancel"], command=win.destroy).pack(side="right", padx=5)
 
     def set_status(msg):
         status_var.set(msg)
@@ -1345,7 +1432,7 @@ def gui_main():
         total_files = len(selected_files)
 
         ui_queue.put(("batch_total", total_files))
-        ui_queue.put(("status", f"Batch start: {total_files} file(s)."))
+        ui_queue.put(("status", ui["batch_start"].format(count=total_files)))
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -1357,7 +1444,7 @@ def gui_main():
                 ui_queue.put(("status", "Batch stopped by user."))
                 break
 
-            ui_queue.put(("status", f"Processing file {idx}/{total_files}: {file_path}"))
+            ui_queue.put(("status", ui["processing_file"].format(idx=idx, total=total_files, file=file_path)))
             ui_queue.put(("file_start", (idx, total_files, file_path)))
 
             if file_validation(file_path) is None:
@@ -1409,7 +1496,7 @@ def gui_main():
 
     def start_batch():
         if not selected_files:
-            messagebox.showwarning("No files", "Please add at least one .docx file.")
+            messagebox.showwarning("No files", ui["no_files"])
             return
         start_btn.config(state="disabled")
         stop_btn.config(state="normal")
@@ -1474,31 +1561,31 @@ def gui_main():
 
                     if batch_errors:
                         msg = "\n".join([f"{fp} | {reason}" for fp, reason in batch_errors])
-                        messagebox.showwarning("Batch completed with errors", msg)
+                        messagebox.showwarning(ui["batch_completed"], msg)
                     else:
-                        messagebox.showinfo("Batch completed", "All files translated successfully.")
+                        messagebox.showinfo(ui["batch_completed"], "All files translated successfully.")
 
                     if output_dir:
-                        if messagebox.askyesno("Open Folder", "Open translated files folder?"):
+                        if messagebox.askyesno(ui["batch_completed"], ui["open_folder"]):
                             webbrowser.open(output_dir)
                 ui_queue.task_done()
         except queue.Empty:
             pass
         root.after(200, process_queue)
 
-    header = ttk.Label(root, text="Docx Translator", font=("Segoe UI", 16))
+    header = ttk.Label(root, text=ui["app_title"], font=("Segoe UI", 16))
     header.pack(pady=10)
 
     btn_frame = ttk.Frame(root)
     btn_frame.pack(fill="x", padx=10)
 
-    add_btn = ttk.Button(btn_frame, text="Add Files", command=add_files)
+    add_btn = ttk.Button(btn_frame, text=ui["add_files"], command=add_files)
     add_btn.pack(side="left", padx=5)
 
-    clear_btn = ttk.Button(btn_frame, text="Clear List", command=clear_files)
+    clear_btn = ttk.Button(btn_frame, text=ui["clear_list"], command=clear_files)
     clear_btn.pack(side="left", padx=5)
 
-    settings_btn = ttk.Button(btn_frame, text="Settings", command=on_open_settings)
+    settings_btn = ttk.Button(btn_frame, text=ui["settings"], command=on_open_settings)
     settings_btn.pack(side="right", padx=5)
 
     listbox = tk.Listbox(root, height=8)
@@ -1510,7 +1597,7 @@ def gui_main():
     file_progress = ttk.Progressbar(root, mode="determinate", maximum=100)
     file_progress.pack(fill="x", padx=10)
 
-    file_status_var = tk.StringVar(value="File: idle")
+    file_status_var = tk.StringVar(value=ui["file_idle"])
     file_status_label = ttk.Label(root, textvariable=file_status_var)
     file_status_label.pack(fill="x", padx=10, pady=(0, 5))
 
@@ -1521,13 +1608,13 @@ def gui_main():
     control_frame = ttk.Frame(root)
     control_frame.pack(fill="x", padx=10, pady=5)
 
-    start_btn = ttk.Button(control_frame, text="Start", command=start_batch)
+    start_btn = ttk.Button(control_frame, text=ui["start"], command=start_batch)
     start_btn.pack(side="left", padx=5)
 
-    stop_btn = ttk.Button(control_frame, text="Stop", command=stop_batch, state="disabled")
+    stop_btn = ttk.Button(control_frame, text=ui["stop"], command=stop_batch, state="disabled")
     stop_btn.pack(side="left", padx=5)
 
-    summary_label = ttk.Label(root, text="Summary")
+    summary_label = ttk.Label(root, text=ui["summary"])
     summary_label.pack(anchor="w", padx=10)
 
     summary_frame = ttk.Frame(root)
