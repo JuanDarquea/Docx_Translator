@@ -27,13 +27,54 @@ from docx.text.paragraph import Paragraph
 from datetime import datetime
 
 
-# load the .env file from the same directory as this script
-try:
-    env_path = Path(__file__).parent / "Project_env.env"
-except NameError:
-    env_path = Path.cwd() / "Project_env.env"
+def get_user_data_dir():
+    appdata = os.getenv("APPDATA")
+    if appdata:
+        return Path(appdata) / "Docx Translator"
+    return Path.home() / ".docx_translator"
 
-load_dotenv(env_path) # load environment variables from .env file
+def ensure_user_data_layout():
+    base_dir = get_user_data_dir()
+    files_dir = base_dir / "Files"
+    base_dir.mkdir(parents=True, exist_ok=True)
+    files_dir.mkdir(parents=True, exist_ok=True)
+    return base_dir, files_dir
+
+def ensure_user_files_defaults():
+    base_dir, files_dir = ensure_user_data_layout()
+    defaults = {
+        "quality_rules.json": Path(__file__).parent / "Files" / "quality_rules.json",
+        "protected_words.json": Path(__file__).parent / "Files" / "protected_words.json",
+    }
+    for name, source in defaults.items():
+        target = files_dir / name
+        if not target.exists() and source.exists():
+            try:
+                target.write_bytes(source.read_bytes())
+            except Exception:
+                pass
+    return files_dir
+
+def ensure_user_env_file():
+    base_dir, _files_dir = ensure_user_data_layout()
+    env_path = base_dir / "Project_env.env"
+    if not env_path.exists():
+        env_path.write_text("DEEPL_API_KEY=\nerror_logs_dir=\n", encoding="utf-8")
+    return env_path
+
+def get_user_env_path():
+    return ensure_user_env_file()
+
+# load the .env file from user data dir first, fallback to app dir
+try:
+    env_path = ensure_user_env_file()
+except Exception:
+    try:
+        env_path = Path(__file__).parent / "Project_env.env"
+    except NameError:
+        env_path = Path.cwd() / "Project_env.env"
+
+load_dotenv(env_path)
 
 # define rate limit parameters
 rate_limit_minute = 450  # translator plan rate limit: 450 requests per minute
@@ -124,9 +165,13 @@ COMMON_ENGLISH_WORDS = {
 
 def load_known_translations():
     try:
-        rules_path = Path(__file__).parent / "Files/quality_rules.json"
-    except NameError:
-        rules_path = Path.cwd() / "Files/quality_rules.json"
+        files_dir = ensure_user_files_defaults()
+        rules_path = files_dir / "quality_rules.json"
+    except Exception:
+        try:
+            rules_path = Path(__file__).parent / "Files/quality_rules.json"
+        except NameError:
+            rules_path = Path.cwd() / "Files/quality_rules.json"
 
     try:
         with open(rules_path, "r", encoding="utf-8") as f:
@@ -148,9 +193,13 @@ KNOWN_TRANSLATIONS = load_known_translations()
 
 def load_protected_words():
     try:
-        words_path = Path(__file__).parent / "Files/protected_words.json"
-    except NameError:
-        words_path = Path.cwd() / "Files/protected_words.json"
+        files_dir = ensure_user_files_defaults()
+        words_path = files_dir / "protected_words.json"
+    except Exception:
+        try:
+            words_path = Path(__file__).parent / "Files/protected_words.json"
+        except NameError:
+            words_path = Path.cwd() / "Files/protected_words.json"
 
     try:
         with open(words_path, "r", encoding="utf-8") as f:
@@ -211,9 +260,14 @@ def select_docx_file():
 
 def load_settings():
     try:
-        settings_path = Path(__file__).parent / "settings.json"
-    except NameError:
-        settings_path = Path.cwd() / "settings.json"
+        base_dir = get_user_data_dir()
+        base_dir.mkdir(parents=True, exist_ok=True)
+        settings_path = base_dir / "settings.json"
+    except Exception:
+        try:
+            settings_path = Path(__file__).parent / "settings.json"
+        except NameError:
+            settings_path = Path.cwd() / "settings.json"
 
     defaults = {
         "api_key": "",
@@ -347,7 +401,9 @@ UI_STRINGS = {
         "save": "Save",
         "cancel": "Cancel",
         "file_idle": "File: idle",
-        "ready": "Ready."
+        "ready": "Ready.",
+        "open_files_folder": "Open Files Folder"
+        ,"open_env_file": "Open Env File"
     },
     "ES": {
         "app_title": "Traductor Docx",
@@ -384,7 +440,9 @@ UI_STRINGS = {
         "save": "Guardar",
         "cancel": "Cancelar",
         "file_idle": "Archivo: en espera",
-        "ready": "Listo."
+        "ready": "Listo.",
+        "open_files_folder": "Abrir carpeta Files"
+        ,"open_env_file": "Abrir archivo Env"
     }
 }
 
@@ -1368,6 +1426,7 @@ async def main():
 def gui_main():
     settings, settings_path = load_settings()
     init_translation_memory(settings, Path(settings_path).parent)
+    _base_dir, user_files_dir = ensure_user_data_layout()
     show_language_selector(settings, settings_path)
     ui = get_ui_strings(settings)
 
@@ -1483,6 +1542,9 @@ def gui_main():
         btn_frame.pack(fill="x", padx=10, pady=10)
         ttk.Button(btn_frame, text=ui["save"], command=save_and_close).pack(side="right")
         ttk.Button(btn_frame, text=ui["cancel"], command=win.destroy).pack(side="right", padx=5)
+
+        ttk.Button(btn_frame, text=ui["open_files_folder"], command=lambda: open_settings_file(user_files_dir)).pack(side="left")
+        ttk.Button(btn_frame, text=ui["open_env_file"], command=lambda: open_settings_file(get_user_env_path())).pack(side="left", padx=5)
 
     def set_status(msg):
         status_var.set(msg)

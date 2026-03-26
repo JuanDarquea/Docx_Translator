@@ -130,7 +130,8 @@ Until then, use the Windows build steps above to produce your own `Docx_Translat
 
 ## DeepL Setup
 
-Add your key to `Project_env.env`:
+Create a `Project_env.env`
+Add your DeepL API key to `Project_env.env`:
 ```
 DEEPL_API_KEY=your_key_here
 ```

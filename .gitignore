@@ -20,13 +20,14 @@ __pycache__/
 
 # Output directories
 Translated_Docs/
+build/
+dist/
 
 # Archives
 *.zip
 
 # Text files
 *.txt
-README.md
 
 # Settings and memory files
 settings.json
