@@ -22,6 +22,7 @@ __pycache__/
 Translated_Docs/
 build/
 dist/
+Output/
 
 # Archives
 *.zip
@@ -32,3 +33,4 @@ dist/
 # Settings and memory files
 settings.json
 translation_memory.json
+.codex
