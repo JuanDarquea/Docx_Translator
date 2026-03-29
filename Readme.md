@@ -94,14 +94,13 @@ python Docx_Translator.py
 ```text
 Docx_Translator/
 │
-├── Docx_Translator.py      # Main script
-├── settings.json           # App settings
-├── Project_env.env         # Environment variables (DeepL key, error log path)
-├── Files/                  # Quality rules + protected words
-├── translation_memory.json # Translation memory (DeepL only)
-├── build_windows.bat       # One-click Windows build
+├── Docx_Translator.py          # Main script
+├── Files/                      # Default quality rules + protected words
+├── build_windows.bat           # One-click Windows build
+├── installer.iss               # Inno Setup script
+├── Output/RELEASE_SIGNING.md   # Manual signing + release steps
 ├── requirements.txt
-└── README.md
+└── Readme.md
 ```
 
 ---
@@ -125,13 +124,13 @@ Docx_Translator/
 
 ## Download for Use
 
-Once a release is published, download the Windows installer or `.exe` from the project’s Releases page.
+Once a release is published, download the Windows installer (`Docx_Translator_Setup.exe`) from the project’s Releases page.
 Until then, use the Windows build steps above to produce your own `Docx_Translator.exe`.
 
 ## DeepL Setup
 
-Create a `Project_env.env`
-Add your DeepL API key to `Project_env.env`:
+The app creates a user-local `Project_env.env` on first run.
+Add your DeepL API key there:
 ```
 DEEPL_API_KEY=your_key_here
 ```
@@ -140,6 +139,26 @@ Switch provider in `Docx_Translator.py`:
 ```
 TRANSLATION_PROVIDER = "deepl"
 ```
+
+## User Data Location
+
+On Windows, user-local files are created here:
+```
+%APPDATA%\\Docx Translator\\
+```
+
+This includes:
+- `settings.json`
+- `Project_env.env`
+- `translation_memory.json`
+- `Files\\quality_rules.json`
+- `Files\\protected_words.json`
+
+## Release Specs (Windows)
+
+- Installer: `Docx_Translator_Setup.exe` (built with Inno Setup)
+- Desktop shortcut + Start Menu entry
+- User data stored in `%APPDATA%\\Docx Translator\\`
 
 ## Notes
 
@@ -170,7 +189,6 @@ Contributions are welcome — especially improvements that:
 
 ## Roadmap
 
-- [ ] Windows installer (Inno Setup)
 - [ ] Signed executable
 - [ ] Auto-updates
 
