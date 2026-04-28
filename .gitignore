@@ -35,3 +35,6 @@ settings.json
 translation_memory.json
 .codex
 .claude
+
+# Git related
+.pre-commit-config.yaml
